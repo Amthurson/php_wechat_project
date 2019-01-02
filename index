@@ -1,0 +1,3608 @@
+<?php
+	header("Content-Type:text/html;charset=utf8");
+	date_default_timezone_set('asia/shanghai');//把时区调整为中国（上海）时区
+	traceHttp();
+ 
+	define("TOKEN", "**********");//Token should be type the one that same as you set on the Service Settings in your Wechat public account backstage
+	$wechatObj = new wechatCallbackapiTest();
+	if (isset($_GET['echostr'])) {
+	    $wechatObj->valid();
+	}else{
+	    $wechatObj->responseMsg();
+	}
+	 
+	class wechatCallbackapiTest
+	{
+	    public function valid()
+	    {
+	        $echoStr = $_GET["echostr"];
+	        if($this->checkSignature()){
+	            echo $echoStr;
+	            exit;
+	        }
+	    }
+	 
+	    private function checkSignature()
+	    {
+	        $signature = $_GET["signature"];
+	        $timestamp = $_GET["timestamp"];
+	        $nonce = $_GET["nonce"];
+	 
+	        $token = TOKEN;
+	        $tmpArr = array($token, $timestamp, $nonce);
+	        sort($tmpArr);
+	        $tmpStr = implode( $tmpArr );
+	        $tmpStr = sha1( $tmpStr );
+	 
+	        if( $tmpStr == $signature ){
+	            return true;
+	        }else{
+	            return false;
+	        }
+	    }
+	 
+	    public function responseMsg()
+	    {
+	        $postStr = $GLOBALS["HTTP_RAW_POST_DATA"];
+	        if (!empty($postStr)){
+	            $postObj = simplexml_load_string($postStr, 'SimpleXMLElement', LIBXML_NOCDATA);
+	            $RX_TYPE = trim($postObj->MsgType);   
+	            //将用户微信发来的内容类型去掉空格后赋值给变量$RX_TYPE。
+	
+	            if ($RX_TYPE == "text")
+	            {
+	              $resultStr = $this->receiveText($postObj);
+				  echo $resultStr;
+				}else if($RX_TYPE == "image")
+	            {$resultStr = $this->receiveImage($postObj);
+				 echo $resultStr;
+				}else if($RX_TYPE == "location")
+				{$resultStr = $this->receiveLocation($postObj);
+	             echo $resultStr;
+				}else if($RX_TYPE == "voice")
+				{
+				$resultStr = $this->receiveVoice($postObj);
+				echo $resultStr;
+				}else if($RX_TYPE == "video")
+				{
+			    $resultStr = $this->receiveVideo($postObj);	
+				echo $resultStr;
+			    }else if($RX_TYPE == "link")
+			    {
+				$resultStr = $this->receiveLink($postObj);
+				echo $resultStr;	
+				}else if($RX_TYPE == "event"){
+				$resultStr_event = $this->receiveEvent($postObj);
+				echo $resultStr_event;
+				}                 
+			}
+	    }
+	
+	    private function receiveText($object)
+	    {
+      //do anything here for recieving text here, the following content in this private function is a real project manage by myself.
+			$funcFlag = 0;
+			$keyword = $object->Content;
+			$keyword = trim(htmlspecialchars_decode($keyword));
+			$username = $object->FromUserName;
+			include('Database Connecting File');//加载数据库密码文件 Including Database Connecting File, IF you use frame like thinkphp, despite this move.
+			$link = @mysql_connect($db_server,$db_user,$db_password,true);
+			if(!$link) { 
+				die("Connect Server Failed: " );
+			}
+			if(!mysql_select_db($db_name,$link)) {
+				die("Select Database Failed: " );
+			}
+			mysql_query("SET NAMES UTF8mb4");
+			
+      //record enliven time
+			$enliven_time = date("Y-m-d H:i:s",time());
+			$sql = 'select * from `enliven_time` where `openid` = "'.$username.'"';
+			$query_setin = mysql_query($sql);
+			$num_setin = mysql_num_rows($query_setin);
+			if($num_setin<1){
+				$sql = 'INSERT INTO `weixin`.`enliven_time` (`id`, `openid`, `enliven_time`) VALUES (NULL, "'.$username.'", "'.$enliven_time.'")';
+				mysql_query($sql);
+			}else{
+				$sql1 = 'UPDATE `enliven_time` SET `enliven_time` = "'.$enliven_time.'" WHERE `openid` = "'.$username.'"';
+				mysql_query($sql1);
+			}
+			
+			//Check the existence of this user in user list, then do the record when the user is new.
+			//判断新库有没有记录
+			$sql_search = "select `USER` from `crm_new` where `USER`='".$username."' limit 1;";
+			$result_search=mysql_query($sql_search);
+			
+			//获取基本信息 The file public.class.php contains all APIs of wechat developing sdk 
+			include('public.class.php');
+			$weixin = new class_weixin_adv("APPID","APPSECRET");//APPID and APPSECRET should be finded on Service Settings
+			$userinfo = $weixin->get_user_info($username);
+			$unionid = $userinfo['unionid'];
+			$nicheng = addslashes($userinfo['nickname']);
+			$current = date("Y-m-d H:i:s");
+			
+			if(mysql_num_rows($result_search)<1){//没有入库新表
+				//入库新表
+				$sql_i="INSERT INTO `crm_new` (`ID`,`USER`,`unionid`,`point`,`nicheng`,`updatetime`) VALUES (NULL,'{$username}','{$unionid}',50,'{$nicheng}','{$current}')";
+				$result_i = mysql_query($sql_i);
+				if(!$result_i){
+					header("Location:https://open.weixin.qq.com/connect/oauth2/authorize?appid=APPID&redirect_uri=http://www.guoyunstore.com".$_SERVER['PHP_SELF']."&response_type=code&scope=snsapi_base&state=1#wechat_redirect");
+				}
+			}
+			//查旧openid
+			$sql_change = "select b.`USER` from `crm_new`a join `crm`b on a.`unionid` = b.`unionid` where a.`USER`='".$username."' limit 1;";
+			$result=mysql_query($sql_change);
+			
+			if(mysql_num_rows($result)<1){//旧表无数据，判定新粉丝
+				//入库旧表
+				$sql_i2="INSERT INTO `crm` (`ID`,`USER`,`unionid`,`point`,`nicheng`,`updatetime`) VALUES (NULL,'{$username}','{$unionid}',50,'{$nicheng}','{$current}')";
+				$result_i2 = mysql_query($sql_i2);
+				if(!$result_i2){
+					header("Location:https://open.weixin.qq.com/connect/oauth2/authorize?appid=APPID&redirect_uri=http://www.guoyunstore.com".$_SERVER['PHP_SELF']."&response_type=code&scope=snsapi_base&state=1#wechat_redirect");
+				}
+			}
+			
+			$rows_change= mysql_fetch_assoc(mysql_query($sql_change));
+			$username = $rows_change['USER'];//openid转换
+			
+			/*开始判定是否参与二维码活动*/
+			if(trim($keyword) == "二维码")
+			{
+	//			$sql = 'SELECT * FROM `genusdaynum` WHERE id = 1';
+	//			$query = mysql_query($sql);
+	//			$rs = mysql_fetch_array($query);
+	//			$num = $rs["num"];//金纳斯日的状态监控，单数为结束，双数为开始。控制此数字的脚本请查看服务器计划任务。
+	//			
+	
+				//优化后获取日期直接判断，跳过数据库及任务计划复杂逻辑
+				$current_day = date("d");//获取今天日
+				$date_num = substr($current_day,strlen($current_day)-1,1);//获取今天日期未数
+				
+				//判断日期未数是否为8,8则开始,否则不开始
+				if ($date_num!=8&&$username!='opWW0t-LGHYeCn3gAllEdk264Vtg'&&$username!='opWW0tyHxqBi55zcS5rtl0bdPh3E')
+				{
+					$contentStr = '活动尚未开始，活动时间为每月8号、18号、28号。';
+					$resultStr = $this->transmitText($object, $contentStr, $funcFlag);
+					return $resultStr;//如果活动尚未开始，返回提示后结束。
+				}
+				$timenow = time();
+				$sql = 'SELECT * FROM `crm` WHERE `USER` ="'.$username.'"';
+				$query = mysql_query($sql);
+				$rs = mysql_fetch_array($query);
+				if ($timenow - $rs["time"] < 86400)  //86400
+				{
+					$erweima = $rs['erweima'];
+					$resttime = 86400-($timenow-$rs["time"]);//剩余时间
+					$url = $weixin->create_qrcode("QR_SCENE", $erweima,$resttime);
+					$resthour = floor($resttime / 3600);
+					$min = floor(($resttime-$resthour*3600)/60);
+					$sec = $resttime-$resthour*3600-$min*60;
+					$contentStr = '您今天获取的二维码将在'.$resthour.'小时'.$min.'分'.$sec.'秒后过期！<a href="http://guoyunstore.com/weixin/genus_day/ercode.php?url='.$url.'&openid='.$username.'">点击此处查看</a>';
+				}
+				else
+				{
+					$erweima = rand(0,2147483646);//二维码参数由32位非0整型组成
+					$erweima = str_replace(0,1,$erweima);//由于二维码参与必须为非0整型，将所有0替换为1
+					$sql = 'SELECT * FROM `crm` WHERE `erweima` = '.$erweima;
+					$query = mysql_query($sql);
+					$row = mysql_num_rows($query);
+					if ($row > 0)
+					{
+						$contentStr = "可能由于网络原因，您获取二维码失败，请重新获取！";
+					}
+					else
+					{
+						$sql = 'UPDATE `crm` SET `erweima`='.$erweima.', `time` = '.$timenow.' WHERE `USER`="'.$username.'"';
+						mysql_query($sql);
+						$url = $weixin->create_qrcode("QR_SCENE", $erweima, "86400");
+						$contentStr = '成功获得二维码，有效期一天，<a href="http://guoyunstore.com/weixin/genus_day/ercode.php?url='.$url.'&openid='.$username.'">点击此处查看</a>';
+					}
+				}
+				$resultStr = $this->transmitText($object, $contentStr, $funcFlag);
+				return $resultStr;
+			}
+			
+			/*开始判定是否参与二维码活动*/
+	//		if(trim($keyword) == "品牌大使系统")
+	//		{
+	//			$erweima = 2147483647;
+	//			include("public.class.new.php");//加载高级接口类
+	//			$weixin = new class_weixin_adv("APPID", "ed759b70605d95a74a16efc32f511370");//实例化一个对象
+	//			$url = $weixin->create_qrcode("QR_SCENE",$erweima,2592000);
+	//			$contentStr = '<a href="'.$url.'">品牌大使系统带参关注二维码</a>';
+	//			$resultStr = $this->transmitText($object,$contentStr,$funcFlag);
+	//			return $resultStr;
+	//		}
+			
+			/*  //幸福双行腺答题活动
+			if(strstr($keyword, "答题")){
+				$content = array();
+				$content[] = array("Title"=>"幸福双行腺互动问答",  "Description"=>"我们经常说，如果卵巢是根，那么胸就是叶，脸就是花，只有拥有了健康的根，才能拥有健康的叶子和美丽的花。", "PicUrl"=>"http://www.guoyunstore.com/weixin/dati/yemei.jpg", "Url" =>"https://open.weixin.qq.com/connect/oauth2/authorize?appid=APPID&redirect_uri=http://www.guoyunstore.com/weixin/dati/index.html?type=baoming&response_type=code&scope=snsapi_base&state=1#wechat_redirect");
+				
+				$resultStr = $this->transmitNews($object, $content, $flag = 0);
+				return $resultStr;
+			}
+			*/
+	//		if(strstr($keyword, "双十一")||strstr($keyword, "双11")){
+	//			$contentStr = "哇塞！您说出本我们的年度关键字 \n<a href='http://genemyth.huobanmall.com/smart.aspx?customerid=4421&url=http://api.open.huobanplus.com/smartPages/13124'>点此打开神秘大门</a>";
+	//			$resultStr = $this->transmitText($object, $contentStr, $funcFlag);
+	//			return $resultStr;
+	//		}
+	
+			
+	
+			if(strstr($keyword, "发货")||strstr($keyword, "到货")||strstr($keyword, "快递")||strstr($keyword, "物流"))
+			{
+				$contentStr = "<a href='http://www.guoyunstore.com/weixin/activity/robot/check.php'>查看物流</a>";
+				$resultStr = $this->transmitText($object, $contentStr, $funcFlag);
+				return $resultStr;
+			}
+	
+			
+			if(strstr($keyword, "修复"))
+			{
+				$contentStr = "抱歉，由于太多人访问，导致部分粉丝今天不能翻翻乐，如果您也玩不了，请点击以下链接修复，然后重试，谢谢\n<a href='https://open.weixin.qq.com/connect/oauth2/authorize?appid=APPID&redirect_uri=http://www.guoyunstore.com/weixin/activity/fanpai/repair.php&response_type=code&scope=snsapi_base&state=1#wechat_redirect'>点此修复翻翻乐</a>";
+				$resultStr = $this->transmitText($object, $contentStr, $funcFlag);
+				return $resultStr;
+			}
+			
+			
+			if(strstr($keyword, "翻翻乐"))
+			{
+				$contentStr = "玩翻翻乐赢金币\n<a href='https://open.weixin.qq.com/connect/oauth2/authorize?appid=APPID&redirect_uri=http://www.guoyunstore.com/weixin/activity/fanpai/index.php&response_type=code&scope=snsapi_base&state=1#wechat_redirect'>【拼手气翻翻乐】</a>";
+				$resultStr = $this->transmitText($object, $contentStr, $funcFlag);
+				return $resultStr;
+			}
+			
+			
+			if(strstr($keyword, "双")||strstr($keyword, "十二"))
+			{
+				$contentStr = "【金因美官方自营店】http://z.icyad.com/h.yOyXJM 点击链接，再选择浏览器打开；或复制这条信息￥60UN087tkoD￥后打开手淘";
+				$resultStr = $this->transmitText($object, $contentStr, $funcFlag);
+				return $resultStr;
+			}
+			
+			if((strstr($keyword, "没")||strstr($keyword, "不"))&&((strstr($keyword, "翻")||strstr($keyword, "牌")||strstr($keyword, "翻乐")||strstr($keyword, "转")||strstr($keyword, "抽")||strstr($keyword, "玩"))||strstr($keyword, "没阅读")||strstr($keyword, "没有阅读")||strstr($keyword,"金币")))
+			{
+				$contentStr = "抱歉，由于太多人访问，导致部分粉丝今天不能翻翻乐，如果您也玩不了，请点击以下链接修复，然后重试，谢谢\n<a href='https://open.weixin.qq.com/connect/oauth2/authorize?appid=APPID&redirect_uri=http://www.guoyunstore.com/weixin/activity/fanpai/repair.php&response_type=code&scope=snsapi_base&state=1#wechat_redirect'>点此修复翻翻乐</a>";
+				$resultStr = $this->transmitText($object, $contentStr, $funcFlag);
+				return $resultStr;
+			}
+			
+			if(strstr($keyword, "排名"))
+			{
+				$contentStr = '<a href="http://www.guoyunstore.com/weixin/MYZX/MYZX_5/">查看最炫美业之星初赛排名榜</a>';
+				$resultStr = $this->transmitText($object, $contentStr, $funcFlag);
+				return $resultStr;
+			}
+			
+			if(strstr($keyword, "首关提示"))
+			{
+				$resultStr = $this->transmitevent_Subscribe($object,"",$flag = 0);
+				return $resultStr;
+			}
+			
+			if(strstr($keyword, "金纳斯女王"))
+			{
+				$contentStr = '<a href="https://open.weixin.qq.com/connect/oauth2/authorize?appid=APPID&redirect_uri=http://www.guoyunstore.com/weixin/activity/queen/zhuye.php&response_type=code&scope=snsapi_base&state=1#wechat_redirect">点击参加金纳斯女王</a>';
+				$resultStr = $this->transmitText($object, $contentStr, $funcFlag);
+				return $resultStr;
+			}
+			
+			if(strstr($keyword, "新品试用"))
+			{
+				$contentStr = '请等待后台审核';
+				$resultStr = $this->transmitText($object, $contentStr, $funcFlag);
+				return $resultStr;
+			}
+			
+			
+			if(strstr($keyword, "签到"))
+			{
+				$content = "亲，金纳斯没有签到哦，签到是金纳斯姐妹品牌金因美的活动哦。您在金纳斯可以通过阅读文章、玩翻翻乐等活动获取金币哦！\n阅读文章点击\n<a href='http://www.guoyunstore.com/weixin/JFMJ/rdyd_index_new.php'>【精选文章】</a>\n玩翻翻乐点击\n<a href='https://open.weixin.qq.com/connect/oauth2/authorize?appid=APPID&redirect_uri=http://www.guoyunstore.com/weixin/activity/fanpai/index.php&response_type=code&scope=snsapi_base&state=1#wechat_redirect'>【拼手气翻翻乐】</a>";
+				//$resultStr = $this->transmitText($object, $contentStr, $funcFlag);
+				$textTpl = "<xml>
+					  <ToUserName><![CDATA[%s]]></ToUserName>
+					  <FromUserName><![CDATA[%s]]></FromUserName>
+					  <CreateTime>%s</CreateTime>
+					  <MsgType><![CDATA[text]]></MsgType>
+					  <Content><![CDATA[%s]]></Content>
+					  <FuncFlag>%d</FuncFlag>
+					  </xml>";
+				$resultStr = sprintf($textTpl, $object->FromUserName, $object->ToUserName, time(), $content, $flag);
+				echo $resultStr;
+				
+				$TY_TCS= "<xml>
+					  <ToUserName><![CDATA[%s]]></ToUserName>
+					  <FromUserName><![CDATA[%s]]></FromUserName>
+					  <CreateTime>%s</CreateTime>
+					  <MsgType><![CDATA[transfer_customer_service]]></MsgType>
+					  </xml>";
+				$resultStr_TCS = sprintf($TY_TCS, $object->FromUserName, $object->ToUserName, time());
+				//$resultStr_TCS = $this->transfer_customer_service($object);
+				echo $resultStr_TCS;
+				//return $resultStr;
+			}
+			
+			if(strstr($keyword, "金币"))
+			{
+				$contentStr = "您在金纳斯可以通过阅读文章、玩翻翻乐等活动获取金币哦！\n阅读文章点击\n<a href='http://www.guoyunstore.com/weixin/JFMJ/rdyd_index_new.php'>【精选文章】</a>\n玩翻翻乐点击\n<a href='https://open.weixin.qq.com/connect/oauth2/authorize?appid=APPID&redirect_uri=http://www.guoyunstore.com/weixin/activity/fanpai/index.php&response_type=code&scope=snsapi_base&state=1#wechat_redirect'>【拼手气翻翻乐】</a>";
+				$resultStr = $this->transmitText($object, $contentStr, $funcFlag);
+				return $resultStr;
+			}
+			
+			if(strstr($keyword, "文章"))
+			{
+				$contentStr = "阅读文章获取金币\n<a href='http://www.guoyunstore.com/weixin/JFMJ/rdyd_index_new.php'>【精选文章】</a>";
+				$resultStr = $this->transmitText($object, $contentStr, $funcFlag);
+				return $resultStr;
+			}
+			
+			if(strstr($keyword, "试用申请")||strstr($keyword, "试用"))
+			{
+				$contentStr = "<a href='https://open.weixin.qq.com/connect/oauth2/authorize?appid=APPID&redirect_uri=http://www.guoyunstore.com/weixin/activity/doubledan/shiyong.php&response_type=code&scope=snsapi_base&state=1#wechat_redirect'>【试用申请】</a>";
+				$resultStr = $this->transmitText($object, $contentStr, $funcFlag);
+				return $resultStr;
+			}
+			
+			
+			if(strstr($keyword, "转吧")||strstr($keyword, "抽奖")||strstr($keyword, "转盘")||strstr($keyword, "摇奖")||strstr($keyword, "转金币")||strstr($keyword, "不能抽奖")||strstr($keyword, "欢乐大转盘"))
+			{
+				$contentStr = "您好，大转盘活动已于2018年6月29日换成“翻翻乐”活动了，现在已经没有大转盘抽奖了哦，玩“拼手气翻翻乐”游戏一样可以获得奖品；翻翻乐在以前大转盘的位置，进入金纳斯公众号→金会员→我要金币→点击“拼手气翻翻乐”→开始翻牌，翻牌结果可在“我的奖品”中查看哦。“拼手气翻翻乐”游戏规则：每次翻牌需支付5金币；如果前一天阅读文章，第二天便可免费获得一次翻牌机会（每天翻牌上限为6次，付金币5次+免费1次）。";
+				$resultStr = $this->transmitText($object, $contentStr, $funcFlag);
+				return $resultStr;
+			}
+			
+			/*
+			
+			if(strstr($keyword, "转吧")||strstr($keyword, "抽奖")||strstr($keyword, "转盘"))
+			{
+				$contentStr = "玩翻翻乐赢金币\n<a href='https://open.weixin.qq.com/connect/oauth2/authorize?appid=APPID&redirect_uri=http://www.guoyunstore.com/weixin/activity/genusdzp/index.php&response_type=code&scope=snsapi_base&state=1#wechat_redirect'>【拼手气翻翻乐】</a>";
+				$resultStr = $this->transmitText($object, $contentStr, $funcFlag);
+				return $resultStr;
+			}
+			*/
+			
+			/*开始判定参与最炫美业之星投票*/
+			 $kw = strtolower(trim($keyword));//将粉丝发来的信息去掉空格，字符串转换成小写
+			 $kwStr1 = substr($kw, 0, 2);
+			 $kwStr2 = substr($kw, 0, 3);
+			 $sql = 'SELECT * FROM `shengfen` WHERE `suoxie`= "'.$kwStr1.'" or `suoxie`="'.$kwStr2.'"';
+			 $query = mysql_query($sql);
+			 if(mysql_num_rows($query) > 0)
+			 {
+				 $rs = mysql_fetch_array($query);
+				 $shijian1 = strtotime($rs['begintime'])-time();//计算地区投票开始时间和现在时间的差
+				 $shijian2 = strtotime($rs['endtime'])-time();//计算地区投票结束时间和当前时间的差
+				 if($shijian1<0 and $shijian2>0)
+				 {//判定当前时间是否为投票时间
+					 $sql = "SELECT * FROM crm_new WHERE `USER` = '{$username}'";
+					 $query = mysql_query($sql);
+					 $rs = mysql_fetch_array($query);
+					 $stat = $rs['toupiao'];
+					 if($stat == '0')
+					 {//判定粉丝是否参与过投票
+						 $sql = 'SELECT * FROM `meirongshi` WHERE `bianhao` = "'.$kw.'"';
+						 $query = mysql_query($sql);
+						 if(mysql_num_rows($query)>0)
+						 {//判定粉丝投票的美容师是否存在
+							 $rs = mysql_fetch_array($query);
+							 $piao = $rs['piaoshu']+1;
+							 $sql = 'UPDATE `meirongshi` SET `piaoshu`='.$piao.' WHERE `bianhao` ="'.$kw.'"';
+							 mysql_query($sql);
+							 $sql = 'UPDATE `crm_new` SET `toupiao` ="'.$kw.'" WHERE `user` = "'.$username.'"';
+							 mysql_query($sql);
+							 $contentStr = "您已经为编号为".$kw."的美容师投上宝贵的一票，感谢您对本活动的大力支持！\n\n<a href='http://www.guoyunstore.com/weixin/MYZX/MYZX_5/'>查看最炫美业之星初赛排名榜</a>";
+							 $resultStr = $this->transmitText($object, $contentStr, $funcFlag);
+							 return $resultStr;
+						 }
+						 else
+						 {
+							 $contentStr = '您正在参与“最炫美业之星”美容师投票，但可能因为您发送的美容师编号不正常，无法查询到该美容师，请仔细检查您发送的美容师编号，确保准确，感谢您对本活动的大力支持！';
+							 $resultStr = $this->transmitText($object, $contentStr, $funcFlag);
+							 return $resultStr;
+						 }
+					 }
+					 else
+					 {
+						 $contentStr = "您已经参与过美容师投票，无法重复参与，感谢您对本活动大力支持！\n\n<a href='http://www.guoyunstore.com/weixin/MYZX/MYZX_5/'>查看最炫美业之星初赛排名榜</a>";
+						 $resultStr = $this->transmitText($object, $contentStr, $funcFlag);
+						 return $resultStr;
+					 } 
+				 }
+				 else if($shijian1 > 0) 
+				 {
+					 $contentStr = '该地区美容师投票活动尚未开始，无法参与投票，感谢您对本活动的大力支持！';
+					 $resultStr = $this->transmitText($object, $contentStr, $funcFlag);
+					 return $resultStr;
+				 }
+				 else if($shijian2 <0)
+				 {
+					 $contentStr = '该地区美容师投票活动已经结束，无法参与投票，感谢您对本活动的大力支持！';
+					 $resultStr = $this->transmitText($object, $contentStr, $funcFlag);
+					 return $resultStr;
+				 }			 
+			 }
+			 /*结束判定参与最炫美业之星活动*/
+			 
+			 
+			if(strstr($keyword, "金纳斯日")){
+				$content = array();
+				$content[] = array("Title"=>"“缘分扫一扫，大礼就送到”",  "Description"=>"", "PicUrl"=>"http://www.guoyunstore.com/weixin/activity/genusday/images/金纳斯日页眉.jpg", "Url" =>"http://www.guoyunstore.com/weixin/activity/genusday/index.php");
+				
+				$resultStr = $this->transmitNews($object, $content, $flag = 0);
+				return $resultStr;
+			}
+			
+			 //金纳斯女王投票活动
+			 if(strstr($keyword, "投票"))
+			{
+				$contentStr = '<a href="https://open.weixin.qq.com/connect/oauth2/authorize?appid=APPID&redirect_uri=http://www.guoyunstore.com/weixin/activity/queen/zhuye.php&response_type=code&scope=snsapi_base&state=1#wechat_redirect">点击参加金纳斯女王</a>';
+				$resultStr = $this->transmitText($object, $contentStr, $funcFlag);
+				return $resultStr;
+			}
+			
+			 if(strstr($keyword, "加冕"))
+			{
+				$contentStr = '<a href="https://open.weixin.qq.com/connect/oauth2/authorize?appid=APPID&redirect_uri=http://www.guoyunstore.com/weixin/activity/queen/zhuye.php&response_type=code&scope=snsapi_base&state=1#wechat_redirect">点击参加金纳斯女王</a>';
+				$resultStr = $this->transmitText($object, $contentStr, $funcFlag);
+				return $resultStr;
+			}
+			
+			if(strstr($keyword, "订单"))
+			{
+				$contentStr = '<a href="http://www.guoyunstore.com/weixin/activity/robot/index.php">智能客服</a>';
+				$resultStr = $this->transmitText($object, $contentStr, $funcFlag);
+				return $resultStr;
+			}
+			
+			
+			if(strstr($keyword, "00"))
+			{
+				$contentStr = '<a href="http://www.guoyunstore.com/weixin/activity/robot/index.php">智能客服</a>';
+				$resultStr = $this->transmitText($object, $contentStr, $funcFlag);
+				return $resultStr;
+			}
+			 
+			 
+			 /*第四届最炫美业之星投票 开始
+		
+			 $zx = strtolower(trim($keyword));//将粉丝发来的信息去掉空格，字符串转换成小写
+			 $zxStr = substr($zx, 0, 2);
+			 $zxStr2 = substr($zx, 2);
+			 $bh = preg_replace('/^0+/','',$zxStr2);
+			 if($zxStr == 'zx'){
+				 
+				 if(time() > '1502812799'){
+					 $contentStr = "该活动已结束";
+						$resultStr = $this->transmitText($object, $contentStr, $funcFlag);
+						return $resultStr;
+				 }else{
+					 //判段是否存在该参赛者
+					$sql = 'select `openid` from `myzx4` where `id` = "'.$bh.'" limit 1';
+					$num_cs = mysql_num_rows(mysql_query($sql));
+					if($num_cs > 0){
+						//判断是否有投票
+						$sql = 'select `openid` from `myzx4_user` where `openid` = "'.$username.'" limit 1';
+						$num_ed = mysql_num_rows(mysql_query($sql));
+						if($num_ed < 1){
+							//插入投票数据
+							$sql = 'INSERT ignore INTO `myzx4_user` (`id`, `openid`, `mid`) VALUES (NULL, "'.$username.'", "'.$bh.'")';
+							mysql_query($sql);
+							
+							$sql = 'UPDATE `myzx4` SET `piaoshu` =  `piaoshu`+1 WHERE `id` = "'.$bh.'"';
+							mysql_query($sql);
+							
+							$contentStr = "谢谢你为 zx".$bh." 号投出宝贵的一票~\n\n<a href='http://www.guoyunstore.com/weixin/activity/MYZX4/zhuye.php'>您可以参与两次抽奖</a>";
+							$resultStr = $this->transmitText($object, $contentStr, $funcFlag);
+							return $resultStr;
+						}else{
+							$contentStr = "你已经投过票，谢谢你对本活动的大力支持！\n\n<a href='http://www.guoyunstore.com/weixin/activity/MYZX4/zhuye.php'>您可以参与两次抽奖</a>";
+							$resultStr = $this->transmitText($object, $contentStr, $funcFlag);
+							return $resultStr;
+						}
+					}else{
+						$contentStr = '您正在参与“最炫美业之星”美容师投票，但可能因为您发送的美容师编号不正常，无法查询到该美容师，请仔细检查您发送的美容师编号，确保准确，感谢您对本活动的大力支持！';
+						$resultStr = $this->transmitText($object, $contentStr, $funcFlag);
+						return $resultStr;
+					} 
+				}
+				 
+				 
+				
+			 }
+			 
+			 第四届最炫美业之星投票 结束*/
+			 
+			 /*开始关键词搜索自动回复文章*/
+			 $sql = 'SELECT * FROM `jfmj` WHERE `l_title` like "%'.$keyword.'%" or `s_title` like "%'.$keyword.'%" ORDER BY `id` DESC LIMIT 0,5';
+			 $query=mysql_query($sql);
+			 $row = mysql_num_rows($query);
+			 //if($row > 0){
+			//	 $content = array();
+			//	 $rs = mysql_fetch_array($query);
+			//	 $content[] = array("Title"=>$rs["l_title"], "Description"=>"", "PicUrl"=>$rs["l_PicUrl"], "Url" =>$rs["l_Url"]);
+			//	 while ($rs = mysql_fetch_array($query))
+			//	 {
+			//		 $content[] = array("Title"=>$rs["l_title"], "Description"=>"", "PicUrl"=>$rs["s_PicUrl"], "Url" =>$rs["l_Url"]);
+			//	 }
+			//	 $resultStr = $this->transmitNews($object, $content, $flag = 0);
+			//	 return $resultStr;
+			//}else{
+				//if(date('w',time())== '0' or date('w',time())== '6' or date('Hi',time()) > '1800'){
+				//	if(!empty($keyword)&&!in_array(date("Y-m-d"),array("2018-06-16","2018-06-17","2018-06-18")))
+				//	{
+				//		$contentStr = '亲您好，我们客服的上班时间是：每周一至周五的早上09：00—12：00，下午13：00—18：00（法定节假日我们也不上班哦），您有什么问题可以在我们上班时间提问，我们看到后会立刻回复哦，感谢您的理解！谢谢！';
+				//		$resultStr = $this->transmitText($object, $contentStr, $funcFlag);
+				//		return $resultStr;
+				//	}
+				//}
+			//}
+			//其他情况调用客服接口进入人工回复
+			$resultStr_TCS = $this->transfer_customer_service($object);
+			return $resultStr_TCS;
+	    }
+		
+		//返回图片
+	    private function receiveImage($object)
+	    {
+	        $funcFlag = 0;
+			$user = $object->FromUserName;
+	        $contentStr = "你发送的是图片，地址为：".$object->PicUrl;
+	        $resultStr = $this->transmitText($object, $contentStr, $funcFlag);
+	        return $resultStr;
+	    }
+		
+		//获取地理位置信息
+	   	private function receiveLocation($object)
+	    {
+	        $funcFlag = 0;
+			$lat  = $object->Location_X;//纬度
+			$lng = $object->Location_Y;//经度
+			$user = $object->FromUserName;//粉丝Openid
+	        //$contentStr = "你发送的是位置，纬度为：".$lat."；经度为：".$lng."；缩放级别为：".$object->Scale."；位置为：".$object->Label."ID为：".$user;
+			
+			include('Database Connecting File');
+			$link = @mysql_connect($db_server,$db_user,$db_password,true);
+			if(!$link) { 
+				die("Connect Server Failed: " );
+			}
+			if(!mysql_select_db($db_name,$link)) {
+				die("Select Database Failed: " );
+			}
+			mysql_query("SET NAMES UTF8mb4");
+			$sql = 'select * from `lbs` where lat<>0 and lat> '.$lat.'-1 and lat<'.$lat.'+1 and lng>'.$lng.'-1 and lng<'.$lng.'+1';
+			$query = mysql_query($sql);
+			$rs = mysql_fetch_array($query);
+			if(mysql_num_rows($query) > 0)
+			{
+			$content = array();
+				$content[] = array("Title"=>"店家：".$rs['name'],  "Description"=>'', "PicUrl"=>"http://www.guoyunstore.com/images/fj.jpg", "Url" =>"");
+				$content[] = array("Title"=>"地址：".$rs['location'],  "Description"=>'aaa', "PicUrl"=>"", "Url" =>"");
+				$content[] = array("Title"=>"电话：".$rs['telephone'],  "Description"=>'aaa', "PicUrl"=>"", "Url" =>"");
+				
+				$resultStr = $this->transmitNews($object, $content, $funcFlag = 0,$name,$location,$telephone);
+			
+	        
+	        return $resultStr;
+			}
+			else
+			{
+				$contentStr = "您所在位置方圆111公里内没有店家，可能您附近的店家信息尚未录入，你也可以通过人工咨询店家信息，感谢您对小金的支持！";
+				$resultStr = $this->transmitText($object, $contentStr, $funcFlag);
+				return $resultStr;
+			}
+	    }
+	
+	    private function receiveVoice($object)
+	    {
+	        $funcFlag = 0;
+			$contentStr = "你发送的是语音，你发送的内容是：".$object->Recognition."";
+			$resultStr = $this->transmitText($object, $contentStr, $funcFlag);
+			return $resultStr;
+	    }
+		
+	    private function receiveVideo($object)
+	    {
+	        $funcFlag = 0;
+	        $contentStr = "你发送的是视频，媒体ID为：".$object->MediaId;
+	        $resultStr = $this->transmitText($object, $contentStr, $funcFlag);
+	        return $resultStr;
+	    }
+	
+	    private function receiveLink($object)
+	    {
+	        $funcFlag = 0;
+	        $contentStr = "你发送的是链接，标题为：".$object->Title."；内容为：".$object->Description."；链接地址为：".$object->Url;
+	        $resultStr = $this->transmitText($object, $contentStr, $funcFlag);
+	        return $resultStr;
+	    }
+	
+	    private function receiveEvent($object)
+	    {
+	        $contentStr = "";
+	        switch ($object->Event)
+	        {
+	            case "subscribe"://关注事件
+				$fromUsername = $object->FromUserName; 
+				include('Database Connecting File');//加载数据库密码文件
+				include('public_function.php');//记录粉丝金币来源明细的公共函数
+				$link = @mysql_connect($db_server,$db_user,$db_password,true);
+				if(!$link) { 
+					die("Connect Server Failed: " );
+				}
+				if(!mysql_select_db($db_name,$link)) {
+					die("Select Database Failed: " );
+				}
+				mysql_query("SET NAMES UTF8mb4");
+				
+				
+				$enliven_time = date("Y-m-d H:i:s",time());
+				$sql = 'select * from `enliven_time` where `openid` = "'.$fromUsername.'"';
+				$query_setin = mysql_query($sql);
+				$num_setin = mysql_num_rows($query_setin);
+				if($num_setin<1){
+					$sql = 'INSERT INTO `weixin`.`enliven_time` (`id`, `openid`, `enliven_time`) VALUES (NULL, "'.$fromUsername.'", "'.$enliven_time.'")';
+					mysql_query($sql);			
+				}else{
+					$sql1 = 'UPDATE `enliven_time` SET `enliven_time` = "'.$enliven_time.'" WHERE `openid` = "'.$fromUsername.'"';
+					mysql_query($sql1);
+				}
+				
+
+				
+				//判断新库有没有记录
+				$sql_search = "select `USER` from `crm_new` where `USER`='".$fromUsername."' limit 1;";
+				$result_search=mysql_query($sql_search);
+				
+				//获取基本信息
+				include('public.class.php');
+				$weixin = new class_weixin_adv("APPID","APPSECRET");
+				$userinfo = $weixin->get_user_info($fromUsername);
+				$unionid = $userinfo['unionid'];
+				$nicheng = addslashes($userinfo['nickname']);
+				$current = date("Y-m-d H:i:s");
+				
+				if(mysql_num_rows($result_search)<1){//没有入库新表
+					
+					//入库新表
+					$sql_i="INSERT INTO `crm_new` (`ID`,`USER`,`unionid`,`point`,`nicheng`,`updatetime`) VALUES (NULL,'{$fromUsername}','{$unionid}',50,'{$nicheng}','{$current}')";
+					$result_i = mysql_query($sql_i);
+				}
+				//查旧openid
+				$sql_change = "select b.`USER` from `crm_new`a join `crm`b on a.`unionid` = b.`unionid` where a.`USER`='".$fromUsername."' limit 1;";
+				$result=mysql_query($sql_change);
+				
+				if (mysql_num_rows($result)>0)//如果数据库存在新关注粉丝的信息，即粉丝曾经关注过金纳斯
+				{
+					$rows_change= mysql_fetch_assoc(mysql_query($sql_change));
+					$fromUsername = $rows_change['USER'];//openid转换
+					
+					$rs=mysql_fetch_array($query);
+					//$name= $rs['USER'];
+					$fen= $rs['point'];//粉丝金币数量
+					if ($fen > 50)//根据政策，取消关注重新关注后，将金币归0处理。而关注时必须给粉丝100金币，所以当粉丝金币高于100时，则更新为100，不足100时维持不变。
+					{
+						$sql = 'UPDATE `crm_new` SET `point`=50 WHERE `USER` = "'.$fromUsername.'"';
+						mysql_query($sql); 
+						jilu($fromUsername, "关注", 50, 50);
+						jilu($fromUsername, "取消关注", -$fen, 0);			  
+					}
+					if ($rs["unionid"] == "0" || $rs["unionid"] == "1" || $rs["unionid"] == "")//如果粉丝的unionid为空，则获取其unionid后更新
+					{
+						$user_info = $weixin->get_user_info($fromUsername);
+						$unionid = $user_info['unionid'];//获取粉丝的unionid
+						$sql = 'UPDATE `crm_new` SET `unionid` = "'.$unionid.'" WHERE `USER` = "'.$fromUsername.'"';
+						mysql_query($sql);
+					}
+	//				$contentStr = "您曾经关注过金纳斯\n我们是专注于美容护肤产品自主研发生产的民族品牌！\n了解品牌详情，请戳\n<a href='http://genuschina.kuaizhan.com/'>【关于容大】</a>\n阅读文章，请戳\n<a href='http://www.guoyunstore.com/weixin/JFMJ/rdyd_index_new.php'>【精选文章】</a>\n积累金币，请戳\n<a href='http://www.guoyunstore.com/weixin/wanttogold/index.php'>【我要金币】</a>\n金币用途，请戳\n<a href='http://www.guoyunstore.com/weixin_fwq/subcribeScoreStrategy.php'>【金币用途】</a>\n姐妹品牌，请戳\n<a href='http://genemyth.huobanmall.com/OAuth2/WeixinAuthorize.aspx?customerid=4421&redirecturl=http://www.guoyunstore.com/jym_weixin/pinpaigs/rukou.php&simpleget=1'>【金因美】</a>";
+					$contentStr = "您的账户里已有50金币：<a href='https://open.weixin.qq.com/connect/oauth2/authorize?appid=APPID&redirect_uri=http://www.guoyunstore.com/weixin/duihuan/index1710.php&response_type=code&scope=snsapi_base&state=1&connect_redirect=1#wechat_redirect'>点我查看</a>\n淘宝：50淘金币≈RMB0.5元\n小金：50金币≈RMB36元\n金币用途及赚取攻略：<a href='http://www.guoyunstore.com/weixin_fwq/subcribeScoreStrategy.php'>点我查看</a>\n\n<a href='http://www.guoyunstore.com/weixin_fwq/mianling20170405jymguanzhuye.php'>点击关注小金姐妹品牌“金因美”</a>\n立即领取试用产品和众多福利";
+					if (!empty($object->EventKey)){
+						$object->EventKey = str_replace("qrscene_","",$object->EventKey);
+						if($object->EventKey==2147483647){
+							$phone = '';
+							$sql_check_login = "select phone from tbsci_userlist where openid = '".$fromUsername."' limit 1";
+							$rows_check_login = mysql_fetch_assoc(mysql_query($sql_check_login));
+							$phone = $rows_check_login['phone'];
+							if($phone!=''){
+								$contentStr = "您的账户里已有50金币：<a href='https://open.weixin.qq.com/connect/oauth2/authorize?appid=APPID&redirect_uri=http://www.guoyunstore.com/weixin/duihuan/index1710.php&response_type=code&scope=snsapi_base&state=1&connect_redirect=1#wechat_redirect'>点我查看</a>\n淘宝：50淘金币≈RMB0.5元\n小金：50金币≈RMB36元\n金币用途及赚取攻略：<a href='http://www.guoyunstore.com/weixin_fwq/subcribeScoreStrategy.php'>点我查看</a>\n\n<a href='http://www.guoyunstore.com/weixin_fwq/mianling20170405jymguanzhuye.php'>点击关注小金姐妹品牌“金因美”</a>\n立即领取试用产品和众多福利\n\n<a href='https://open.weixin.qq.com/connect/oauth2/authorize?appid=APPID
+                &redirect_uri=http://www.guoyunstore.com/weixin/test/anunal_activity/landingpage.php&response_type=code&scope=snsapi_base&state=1#wechat_redirect'>品牌大使系统</a>";
+							}else{
+								$contentStr = "您的账户里已有50金币：<a href='https://open.weixin.qq.com/connect/oauth2/authorize?appid=APPID&redirect_uri=http://www.guoyunstore.com/weixin/duihuan/index1710.php&response_type=code&scope=snsapi_base&state=1&connect_redirect=1#wechat_redirect'>点我查看</a>\n淘宝：50淘金币≈RMB0.5元\n小金：50金币≈RMB36元\n金币用途及赚取攻略：<a href='http://www.guoyunstore.com/weixin_fwq/subcribeScoreStrategy.php'>点我查看</a>\n\n<a href='http://www.guoyunstore.com/weixin_fwq/mianling20170405jymguanzhuye.php'>点击关注小金姐妹品牌“金因美”</a>\n立即领取试用产品和众多福利\n\n<a href='https://open.weixin.qq.com/connect/oauth2/authorize?appid=APPID&redirect_uri=http://www.guoyunstore.com/weixin/test/anunal_activity/login2.php&response_type=code&scope=snsapi_base&state=1#wechat_redirect'>品牌大使系统-签到</a>";
+							}
+						}
+					}
+					//新关注提示 2018-06-13
+					$resultStr_event_GENUS = $this->transmitevent_Subscribe($object,"",$flag = 0);
+					return $resultStr_event_GENUS;
+				}
+				else
+				{
+					//关注粉丝入库
+					$user_info = $weixin->get_user_info($fromUsername);
+					$nicheng = addslashes($user_info['nickname']);//获取粉丝昵称
+					$unionid = $user_info['unionid'];//获取粉丝的unionid
+					$current = date("Y-m-d H:i:s");
+					$sql="INSERT INTO `crm` (`ID`,`USER`,`unionid`,`point`,`nicheng`,`updatetime`) VALUES (NULL,'{$fromUsername}','{$unionid}',50,'{$nicheng}','{$current}')";
+					mysql_query($sql);
+					$sql_search = "select `ID` from `crm` where USER = '".$fromUsername."'";
+					$rows_search = mysql_fetch_assoc(mysql_query($sql_search));
+					jilu($fromUsername, "关注", 50, 50); 
+	//				$contentStr = "美出天际的你，送你50金币\n我们是专注于美容护肤产品自主研发生产的民族品牌！\n了解品牌详情，请戳\n<a href='http://genuschina.kuaizhan.com/'>【关于容大】</a>\n阅读文章，请戳\n<a href='http://www.guoyunstore.com/weixin/JFMJ/rdyd_index_new.php'>【精选文章】</a>\n积累金币，请戳\n<a href='http://www.guoyunstore.com/weixin/wanttogold/index.php'>【我要金币】</a>\n金币用途，请戳\n<a href='http://www.guoyunstore.com/weixin_fwq/subcribeScoreStrategy.php'>【金币用途】</a>\n姐妹品牌，请戳\n<a href='http://genemyth.huobanmall.com/OAuth2/WeixinAuthorize.aspx?customerid=4421&redirecturl=http://www.guoyunstore.com/jym_weixin/pinpaigs/rukou.php&simpleget=1'>【金因美】</a>";
+					$contentStr = "您的账户里已有50金币：<a href='https://open.weixin.qq.com/connect/oauth2/authorize?appid=APPID&redirect_uri=http://www.guoyunstore.com/weixin/duihuan/index1710.php&response_type=code&scope=snsapi_base&state=1&connect_redirect=1#wechat_redirect'>点我查看</a>\n淘宝：50淘金币≈RMB0.5元\n小金：50金币≈RMB36元\n金币用途及赚取攻略：<a href='http://www.guoyunstore.com/weixin_fwq/subcribeScoreStrategy.php'>点我查看</a>\n\n<a href='http://www.guoyunstore.com/weixin_fwq/mianling20170405jymguanzhuye.php'>点击关注小金姐妹品牌“金因美”</a>\n立即领取试用产品和众多福利";
+					if (!empty($object->EventKey))//如果粉丝的二维码参数不为空，即粉丝通过扫描二维码关注，则判定该粉丝是否为好友推荐关注，详细参见“金纳斯日”活动
+					{
+						$object->EventKey = str_replace("qrscene_","",$object->EventKey);//直接获取场景值的ID
+						if($object->EventKey!=2147483647){
+							$sql = 'SELECT USER,point,fensi,genus_day_date FROM `crm` WHERE `erweima` = '.$object->EventKey;//搜索二维码的提供者
+							$query = mysql_query($sql);
+							$row = mysql_num_rows($query);
+							if ($row > 0)
+							{
+								$rs = mysql_fetch_array($query);
+								$rise_user = $rs["USER"];//二维码的提供者Openid
+								$point = $rs["point"]+3;
+								$fensi = $rs["fensi"]+1;
+								$date = date("Y-m-d");
+								$record = strtotime($rs["genus_day_date"]);
+								if($record<strtotime($date)){
+									$sql = 'UPDATE `crm` SET `point` = `point`+3, `fensi` = `fensi` + 1 , genus_day_record = genus_day_record + 1 , genus_day_total = genus_day_total + 1 , genus_day_date = "'.$date.'" WHERE `USER` = "'.$rise_user.'"';//为二维码提供者增加金币并增加1个推荐粉丝数量，数量由政策决定
+								}else{
+									$sql = 'UPDATE `crm` SET `point` = `point`+3, `fensi` = `fensi` + 1 , genus_day_total = genus_day_total + 1  WHERE `USER` = "'.$rise_user.'"';//为二维码提供者增加金币并增加1个推荐粉丝数量，数量由政策决定
+								}
+								$result_add = mysql_query($sql);
+								if($result_add){
+									jilu($rise_user, "金纳斯日推荐粉丝", 3, $point);
+									$data = array(
+							           "touser"=>$rise_user,
+							           "template_id"=>"9DDuZA0AM-LqlShx9COcq5mbvvyosE17v0yhlKloU18",
+							           "url"=>"https://open.weixin.qq.com/connect/oauth2/authorize?appid=APPID&redirect_uri=http://www.guoyunstore.com/weixin/WDJB2.php&response_type=code&scope=snsapi_base&state=1#wechat_redirect",            
+							           "topcolor" => "#C89400",
+							           "data"=>array(
+						                   "first"=>array(
+						                       "value"=>"恭喜，您的好友:",
+						                       "color"=>"#C89400"
+						                   ),
+						                   "keyword1"=>array(
+						                       "value"=>urlencode($nicheng),
+						                       "color"=>"#C89400"
+						                   ),
+						                   "keyword2"=>array(
+						                       "value"=>urlencode($rows_search['id']),
+						                       "color"=>"#C89400"
+						                   ),
+						                   "keyword3"=>array(
+						                       "value"=>urlencode($current),
+						                       "color"=>"#C89400"
+						                   ),
+						                   "remark"=>array(
+						                       "value"=>"通过您的二维码成为了金纳斯的新伙伴，您获得3枚金币并累计1位粉丝到您的推荐粉丝数中，请查收！\n您当前金币为".$point."枚；\n推荐粉丝数为".$fensi."位。",
+						                       "color"=>"#C89400"
+						                   )
+							           )
+									);
+									var_dump($weixin->send_template_message(urldecode(json_encode($data))));//调用客服回复接口，向二维码提供者作反馈信息
+								}
+							}
+		//					$contentStr = "美出天际的你，送你50 金币\n我们是专注于美容护肤产品自主研发生产的民族品牌！\n了解品牌详情，请戳\n<a href='http://genuschina.kuaizhan.com/'>【关于容大】</a>\n阅读文章，请戳\n<a href='http://www.guoyunstore.com/weixin/JFMJ/rdyd_index_new.php'>【精选文章】</a>\n积累金币，请戳\n<a href='http://www.guoyunstore.com/weixin/wanttogold/index.php'>【我要金币】</a>\n金币用途，请戳\n<a href='http://www.guoyunstore.com/weixin_fwq/subcribeScoreStrategy.php'>【金币用途】</a>\n姐妹品牌，请戳\n<a href='http://genemyth.huobanmall.com/OAuth2/WeixinAuthorize.aspx?customerid=4421&redirecturl=http://www.guoyunstore.com/jym_weixin/pinpaigs/rukou.php&simpleget=1'>【金因美】</a>";
+							$contentStr = "您的账户里已有50金币：<a href='https://open.weixin.qq.com/connect/oauth2/authorize?appid=APPID&redirect_uri=http://www.guoyunstore.com/weixin/duihuan/index1710.php&response_type=code&scope=snsapi_base&state=1&connect_redirect=1#wechat_redirect'>点我查看</a>\n淘宝：50淘金币≈RMB0.5元\n小金：50金币≈RMB36元\n金币用途及赚取攻略：<a href='http://www.guoyunstore.com/weixin_fwq/subcribeScoreStrategy.php'>点我查看</a>\n\n8.8-8.15，争当品牌大使开赛，这里有千元大奖，\n<a href='https://open.weixin.qq.com/connect/oauth2/authorize?appid=APPID&redirect_uri=http://www.guoyunstore.com/weixin/activity/myzx4/index.php?id=79&response_type=code&scope=snsapi_base&state=1#wechat_redirect'>你可以点击我参与活动</a>\n<a href='http://www.guoyunstore.com/weixin/activity/MYZX4/zhuye.php'>还可以点击我宝箱开</a>\n\n<a href='http://www.guoyunstore.com/weixin_fwq/mianling20170405jymguanzhuye.php'>点击关注小金姐妹品牌“金因美”</a>\n立即领取试用产品和众多福利";
+						}else{
+							$phone = '';
+							$sql_check_login = "select phone from  tbsci_userlist where openid = '".$fromUsername."' limit 1";
+							$rows_check_login = mysql_fetch_assoc(mysql_query($sql_check_login));
+							$phone = $rows_check_login['phone'];
+							if($phone!=''){
+								$contentStr = "您的账户里已有50金币：<a href='https://open.weixin.qq.com/connect/oauth2/authorize?appid=APPID&redirect_uri=http://www.guoyunstore.com/weixin/duihuan/index1710.php&response_type=code&scope=snsapi_base&state=1&connect_redirect=1#wechat_redirect'>点我查看</a>\n淘宝：50淘金币≈RMB0.5元\n小金：50金币≈RMB36元\n金币用途及赚取攻略：<a href='http://www.guoyunstore.com/weixin_fwq/subcribeScoreStrategy.php'>点我查看</a>\n\n8.8-8.15，争当品牌大使开赛，这里有千元大奖，\n<a href='https://open.weixin.qq.com/connect/oauth2/authorize?appid=APPID&redirect_uri=http://www.guoyunstore.com/weixin/activity/myzx4/index.php?id=79&response_type=code&scope=snsapi_base&state=1#wechat_redirect'>你可以点击我参与活动</a>\n<a href='http://www.guoyunstore.com/weixin/activity/MYZX4/zhuye.php'>还可以点击我宝箱开</a>\n\n<a href='http://www.guoyunstore.com/weixin_fwq/mianling20170405jymguanzhuye.php'>点击关注小金姐妹品牌“金因美”</a>\n立即领取试用产品和众多福利\n\n<a href='https://open.weixin.qq.com/connect/oauth2/authorize?appid=APPID&redirect_uri=http://www.guoyunstore.com/weixin/test/anunal_activity/landingpage.php&response_type=code&scope=snsapi_base&state=1#wechat_redirect'>品牌大使系统</a>";
+							}else{
+								$contentStr = "您的账户里已有50金币：<a href='https://open.weixin.qq.com/connect/oauth2/authorize?appid=APPID&redirect_uri=http://www.guoyunstore.com/weixin/duihuan/index1710.php&response_type=code&scope=snsapi_base&state=1&connect_redirect=1#wechat_redirect'>点我查看</a>\n淘宝：50淘金币≈RMB0.5元\n小金：50金币≈RMB36元\n金币用途及赚取攻略：<a href='http://www.guoyunstore.com/weixin_fwq/subcribeScoreStrategy.php'>点我查看</a>\n\n8.8-8.15，争当品牌大使开赛，这里有千元大奖，\n<a href='https://open.weixin.qq.com/connect/oauth2/authorize?appid=APPID&redirect_uri=http://www.guoyunstore.com/weixin/activity/myzx4/index.php?id=79&response_type=code&scope=snsapi_base&state=1#wechat_redirect'>你可以点击我参与活动</a>\n<a href='http://www.guoyunstore.com/weixin/activity/MYZX4/zhuye.php'>还可以点击我宝箱开</a>\n\n<a href='http://www.guoyunstore.com/weixin_fwq/mianling20170405jymguanzhuye.php'>点击关注小金姐妹品牌“金因美”</a>\n立即领取试用产品和众多福利\n\n<a href='https://open.weixin.qq.com/connect/oauth2/authorize?appid=APPID&redirect_uri=http://www.guoyunstore.com/weixin/test/anunal_activity/login2.php&response_type=code&scope=snsapi_base&state=1#wechat_redirect'>品牌大使系统-签到</a>";
+							}
+						}
+					}
+					//$resultStr = $this->transmittext($object, $contentStr);
+					//return $resultStr;
+					//新关注提示 2018-06-13
+					$resultStr_event_GENUS = $this->transmitevent_Subscribe($object,"",$flag = 0);
+					return $resultStr_event_GENUS;
+				}
+				mysql_close($link);
+				break;
+				  
+				case "SCAN":
+				
+				$contentStr = "我们是专注于美容护肤产品自主研发生产的民族品牌！\n了解品牌详情，请戳\n<a href='http://genuschina.kuaizhan.com/'>【关于容大】</a>\n阅读文章，请戳\n<a href='http://www.guoyunstore.com/weixin/JFMJ/rdyd_index_new.php'>【精选文章】</a>\n积累金币，请戳\n<a href='http://www.guoyunstore.com/weixin/wanttogold/index.php'>【我要金币】</a>\n金币用途，请戳\n<a href='http://www.guoyunstore.com/weixin_fwq/subcribeScoreStrategy.php'>【金币用途】</a>\n姐妹品牌，请戳\n<a href='http://genemyth.huobanmall.com/OAuth2/WeixinAuthorize.aspx?customerid=4421&redirecturl=http://www.guoyunstore.com/jym_weixin/pinpaigs/rukou.php&simpleget=1'>【金因美】</a>";
+				$resultStr = $this->transmittext($object, $contentStr);
+				return $resultStr;
+				
+				case "unsubscribe": 
+				$contentStr = "";
+				break;
+				  
+				case "CLICK":
+		
+				switch ($object->EventKey)
+				{
+					//美业之星
+					/*
+					case "MYZX":
+					$contentStr = "";
+					$resultStr_event_MYZX = $this->transmitevent_MYZX($object, $contentStr);
+					return $resultStr_event_MYZX;
+					break;
+					*/		
+					
+					case "DH":
+					$fromUsername = $object->FromUserName;
+					$contentStr = "";
+					$resultStr_event_DH = $this->transmitevent_DH($object, $contentStr,$flag = 0);
+					return $resultStr_event_DH;
+					break;
+					
+					//加盟方式400
+					case "join":
+					$fromUsername = $object->FromUserName;
+					$contentStr = "";
+					$resultStr_event_join = $this->transmitevent_join($object, $contentStr,$flag = 0);
+					return $resultStr_event_join;
+					break;
+					
+					//第四届最炫美业之星
+					case "MYZX":
+					$fromUsername = $object->FromUserName;
+					$contentStr = "";
+					$resultStr_event_MYZX = $this->transmitevent_MYZX($object, $contentStr,$flag = 0);
+					return $resultStr_event_MYZX;
+					break;
+					
+					//2017春节活动
+					case "chunjie":
+					$fromUsername = $object->FromUserName;
+					$contentStr = "";
+					$resultStr_event_chunjie = $this->transmitevent_chunjie($object, $contentStr,$flag = 0);
+					return $resultStr_event_chunjie;
+					break;
+					
+					
+					case "YZ":
+					$contentStr = "";
+					$resultStr_event_YZ = $this->transmitevent_YZ($object, $contentStr,$flag = 0);
+					return $resultStr_event_YZ;
+					break;
+					
+					case "GENUS":
+					$contentStr = "";
+					$resultStr_event_GENUS = $this->transmitevent_GENUS($object, $contentStr,$flag = 0);
+					return $resultStr_event_GENUS;
+					break;
+					
+					
+					case "QUEEN":  
+					$fromUsername = $object->FromUserName;
+					$contentStr = "";
+					$resultStr_event_queen = $this->transmitevent_queen($object, $contentStr,$flag = 0);
+					return $resultStr_event_queen;
+					break;
+					
+					case "MQJ":
+					$fromUsername = $object->FromUserName;
+					$contentStr = "";
+					$resultStr_event_mqj = $this->transmitevent_mqj($object, $contentStr,$flag = 0);
+					return $resultStr_event_mqj;
+					break;
+					
+					case "CLUB":
+					$fromUsername = $object->FromUserName;
+					$contentStr = '系统开发中，敬请期待！';
+					$resultStr = $this->transmittext($object, $contentStr);
+					return $resultStr;
+					break;
+					/*
+					case "TEST":
+					$fromUsername = $object->FromUserName;
+					$contentStr = "";
+					$resultStr_event_TEST = $this->transmitevent_TEST($object, $contentStr,$flag = 0);
+					return $resultStr_event_TEST;
+					break;
+					*/
+					case "DZP":
+					$fromUsername = $object->FromUserName;
+					$contentStr = "";
+					$resultStr_event_DZP = $this->transmitevent_DZP($object, $contentStr,$flag = 0);
+					return $resultStr_event_DZP;
+					break;
+					
+					case "YD"://元旦乐翻天活动
+					$fromUsername = $object->FromUserName;
+					$contentStr = "";
+					$resultStr_event_YD = $this->transmitevent_YD($object, $contentStr,$flag = 0);
+					return $resultStr_event_YD;
+					break;
+				}
+				break;
+				default:
+				//判断用户48小时
+				$fromUsername = $object->FromUserName; 
+				include('Database Connecting File');//加载数据库密码文件
+				include('public_function.php');//记录粉丝金币来源明细的公共函数
+				$link = @mysql_connect($db_server,$db_user,$db_password,true);
+				if(!$link) { 
+					die("Connect Server Failed: " );
+				}
+				if(!mysql_select_db($db_name,$link)) {
+					die("Select Database Failed: " );
+				}
+				mysql_query("SET NAMES UTF8mb4");
+				
+				$enliven_time = date("Y-m-d H:i:s",time());
+				$sql = 'select * from `enliven_time` where `openid` = "'.$fromUsername.'"';
+				$query_setin = mysql_query($sql);
+				$num_setin = mysql_num_rows($query_setin);
+				if($num_setin<1){
+					$sql = 'INSERT INTO `weixin`.`enliven_time` (`id`, `openid`, `enliven_time`) VALUES (NULL, "'.$fromUsername.'", "'.$enliven_time.'")';
+					mysql_query($sql);			
+				}else{
+					$sql1 = 'UPDATE `enliven_time` SET `enliven_time` = "'.$enliven_time.'" WHERE `openid` = "'.$fromUsername.'"';
+					mysql_query($sql1);
+				}
+				
+				$contentStr = "receive a new event: ".$object->Event;
+				break;
+	        }
+	    }
+		
+		private function transmitText($object, $content, $flag = 0)
+		{
+		   $textTpl = "<xml>
+					  <ToUserName><![CDATA[%s]]></ToUserName>
+					  <FromUserName><![CDATA[%s]]></FromUserName>
+					  <CreateTime>%s</CreateTime>
+					  <MsgType><![CDATA[text]]></MsgType>
+					  <Content><![CDATA[%s]]></Content>
+					  <FuncFlag>%d</FuncFlag>
+					  </xml>";
+			$resultStr = sprintf($textTpl, $object->FromUserName, $object->ToUserName, time(), $content, $flag);
+			return $resultStr;	
+		}
+		
+		private function transmitNews($object, $newsArray, $flag = 0)
+	    {
+	        if(!is_array($newsArray)){
+	            return;
+	        }
+	        $itemTpl = "<item>
+	        <Title><![CDATA[%s]]></Title>
+	        <Description><![CDATA[%s]]></Description>
+	        <PicUrl><![CDATA[%s]]></PicUrl>
+	        <Url><![CDATA[%s]]></Url>
+		    </item>
+			";
+	        $item_str = "";
+	        foreach ($newsArray as $item){
+	            $item_str .= sprintf($itemTpl, $item['Title'], $item['Description'], $item['PicUrl'], $item['Url']);
+	        }
+	        $xmlTpl = "<xml>
+			<ToUserName><![CDATA[%s]]></ToUserName>
+			<FromUserName><![CDATA[%s]]></FromUserName>
+			<CreateTime>%s</CreateTime>
+			<MsgType><![CDATA[news]]></MsgType>
+			<ArticleCount>%s</ArticleCount>
+			<Articles>
+			$item_str</Articles>
+			</xml>";
+	
+	        $result = sprintf($xmlTpl, $object->FromUserName, $object->ToUserName, time(), count($newsArray));
+	        return $result;
+	    }
+		/*
+		<item>
+			<Title><![CDATA[【总决赛人气排行榜】]]></Title> 
+			<Description><![CDATA[1]]></Description>
+			<PicUrl><![CDATA[http://www.guoyunstore.com/weixin/images/MYZX/zjs.jpg]]></PicUrl>
+			<Url><![CDATA[www.guoyunstore.com/weixin/MYZX/chek.php]]></Url>
+			</item>
+			
+			  <item>
+		  <Title><![CDATA[金因美养白系列]]></Title> 
+		  <Description><![CDATA[1]]></Description>
+		  <PicUrl><![CDATA[http://www.guoyunstore.com/weixin_fwq/images/JYM.jpg]]></PicUrl>
+		  <Url><![CDATA[http://www.guoyunstore.com/weixin/MYKT/JYM_index.html]]></Url>
+		  </item>
+		  
+		   <item>
+		  <Title><![CDATA[金纳斯至尊童颜5+2项目]]></Title> 
+		  <Description><![CDATA[1]]></Description>
+		  <PicUrl><![CDATA[http://www.guoyunstore.com/weixin_fwq/images/MY_ZZTY.jpg]]></PicUrl>
+		  <Url><![CDATA[http://www.guoyunstore.com/weixin/MYKT/MY_ZZTY.html]]></Url>
+		  </item>
+			
+			*/
+		
+		private function transfer_customer_service($object){
+			$TY_TCS= "<xml>
+					  <ToUserName><![CDATA[%s]]></ToUserName>
+					  <FromUserName><![CDATA[%s]]></FromUserName>
+					  <CreateTime>%s</CreateTime>
+					  <MsgType><![CDATA[transfer_customer_service]]></MsgType>
+					  </xml>";
+			$resultStr_TCS = sprintf($TY_TCS, $object->FromUserName, $object->ToUserName, time());
+			return $resultStr_TCS;
+		}
+		/*
+		<item>
+		<Title><![CDATA[一【活动亮点】]]></Title> 
+		<Description><![CDATA[1]]></Description>
+		<PicUrl><![CDATA[http://www.guoyunstore.com/weixin/images/MYZX/index_1.jpg]]></PicUrl>
+		<Url><![CDATA[www.guoyunstore.com/weixin/MYZX/MYZX_2/LD.html]]></Url>
+		</item>
+		
+		<item>
+		<Title><![CDATA[二【赛事设置】]]></Title> 
+		<Description><![CDATA[1]]></Description>
+		<PicUrl><![CDATA[http://www.guoyunstore.com/weixin/images/MYZX/index_2.jpg]]></PicUrl>
+		<Url><![CDATA[www.guoyunstore.com/weixin/MYZX/MYZX_2/SS.html]]></Url>
+		</item>
+								   <item>
+		<Title><![CDATA[三【获奖名单】]]></Title> 
+		<Description><![CDATA[1]]></Description>
+		<PicUrl><![CDATA[http://www.guoyunstore.com/weixin/images/MYZX/index_3.jpg]]></PicUrl>
+		<Url><![CDATA[www.guoyunstore.com/weixin/MYZX/hjd.html]]></Url>
+		</item>
+		<item>
+		<Title><![CDATA[四【动态跟踪】]]></Title> 
+		<Description><![CDATA[1]]></Description>
+		<PicUrl><![CDATA[http://www.guoyunstore.com/weixin/images/MYZX/index_4.jpg]]></PicUrl>
+		<Url><![CDATA[www.guoyunstore.com/weixin/MYZX/dtgz.html]]></Url>
+		</item>
+		*/
+		
+		//第三届最炫美业之星
+		/*
+		private function transmitevent_MYZX($object, $content, $flag = 0)
+	    {
+	         $newsTpl = "<xml>
+						<ToUserName><![CDATA[%s]]></ToUserName>
+						<FromUserName><![CDATA[%s]]></FromUserName>
+						<CreateTime>%s</CreateTime>
+						<MsgType><![CDATA[news]]></MsgType>
+						<ArticleCount>5</ArticleCount>
+						<Articles>
+						<item>
+						<Title><![CDATA[第三届“最炫美业之星]]></Title> 
+						<Description><![CDATA[第三届“最炫美业之星]]></Description>
+						<PicUrl><![CDATA[http://www.guoyunstore.com/weixin/images/MYZX/yemei3.jpg]]></PicUrl>
+						<Url><![CDATA[https://open.weixin.qq.com/connect/oauth2/authorize?appid=APPID&redirect_uri=http://www.guoyunstore.com/weixin/JFMJ/JFMJ_20160225180317.php&response_type=code&scope=snsapi_base&state=1#wechat_redirect]]></Url>
+						</item>
+						
+						<item>
+						<Title><![CDATA[各赛区人气投票排行榜]]></Title> 
+						<Description><![CDATA[1]]></Description>
+						<PicUrl><![CDATA[http://www.guoyunstore.com/weixin/images/MYZX/index_1.jpg]]></PicUrl>
+						<Url><![CDATA[http://www.guoyunstore.com/weixin/MYZX/MYZX_3/pm/check_chu.php]]></Url>
+						</item>
+						
+						<item>
+						<Title><![CDATA[最炫美业之星代购预售卡]]></Title> 
+						<Description><![CDATA[1]]></Description>
+						<PicUrl><![CDATA[http://www.guoyunstore.com/weixin/test/cici_offlinepayment/img/888.jpg]]></PicUrl>
+						<Url><![CDATA[https://open.weixin.qq.com/connect/oauth2/authorize?appid=APPID&redirect_uri=http://www.guoyunstore.com/weixin/test/cici_offlinepayment/prepurchase.php&response_type=code&scope=snsapi_base&state=1&from=singlemessage&isappinstalled=0#wechat_redirect]]></Url>
+						</item>
+						
+						<item>
+						<Title><![CDATA[第三届最炫美业之星总决赛邀请函]]></Title> 
+						<Description><![CDATA[1]]></Description>
+						<PicUrl><![CDATA[http://www.guoyunstore.com/weixin/test/cao_AugustBigEvent/img/xiaotu2.jpg]]></PicUrl>
+						<Url><![CDATA[http://q.eqxiu.com/s/z7LJV3cP?eqrcode=1&from=singlemessage&isappinstalled=0]]></Url>
+						</item>
+						
+						<item>
+						<Title><![CDATA[点燃梦想，传递火炬]]></Title>
+						<Description><![CDATA[1]]></Description>
+						<PicUrl><![CDATA[http://www.guoyunstore.com/weixin/test/torch/images/xiaotu.jpg]]></PicUrl>
+						<Url><![CDATA[http://www.guoyunstore.com/weixin/test/torch/index.php]]></Url>
+						</item>
+						
+						<FuncFlag>0</FuncFlag>
+						</xml>";
+			$resultStr_event_MYZX = sprintf($newsTpl, $object->FromUserName, $object->ToUserName, time(), $content, $flag);
+	        return $resultStr_event_MYZX;
+	    }
+		*/
+		
+		
+		//第四届最炫美业之星	
+		private function transmitevent_MYZX($object, $content, $flag = 0)
+	    {
+	         $newsTpl = "<xml>
+						<ToUserName><![CDATA[%s]]></ToUserName>
+						<FromUserName><![CDATA[%s]]></FromUserName>
+						<CreateTime>%s</CreateTime>
+						<MsgType><![CDATA[news]]></MsgType>
+						<ArticleCount>3</ArticleCount>
+						<Articles>
+						
+						<item>
+						<Title><![CDATA[第四届“最炫美业之星”初赛]]></Title> 
+						<Description><![CDATA[第四届“最炫美业之星”]]></Description>
+						<PicUrl><![CDATA[http://www.guoyunstore.com/weixin/MYZX/MYZX_4/gone/images/4yemei.jpg]]></PicUrl>
+						<Url><![CDATA[http://www.guoyunstore.com/weixin/activity/MYZX4/chusai.php]]></Url>
+						</item>
+						
+						<item>
+						<Title><![CDATA[民族品牌大使系统]]></Title> 
+						<Description><![CDATA[1]]></Description>
+						<PicUrl><![CDATA[http://www.guoyunstore.com/weixin/images/MYZX/index_1.jpg]]></PicUrl>
+						<Url><![CDATA[https://open.weixin.qq.com/connect/oauth2/authorize?appid=APPID&redirect_uri=http://www.guoyunstore.com/weixin/test/anunal_activity/landingpage.php&response_type=code&scope=snsapi_base&state=1#wechat_redirect]]></Url>
+						</item>
+						
+						<item>
+						<Title><![CDATA[美业之星往届风采]]></Title> 
+						<Description><![CDATA[1]]></Description>
+						<PicUrl><![CDATA[http://www.guoyunstore.com/weixin/MYZX/IMG/80x80.jpg]]></PicUrl>
+						<Url><![CDATA[http://www.guoyunstore.com/weixin/myzx/myzx_4/gone/]]></Url>
+						</item>
+						
+						<FuncFlag>0</FuncFlag>
+						</xml>";
+			$resultStr_event_MYZX = sprintf($newsTpl, $object->FromUserName, $object->ToUserName, time(), $content, $flag);
+	        return $resultStr_event_MYZX;
+	    }
+	    
+		private function transmitevent_DH($object, $contentStr,$flag = 0)
+	    {
+	         $DHTpl = "<xml>
+					  <ToUserName><![CDATA[%s]]></ToUserName>
+					  <FromUserName><![CDATA[%s]]></FromUserName>
+					  <CreateTime>%s</CreateTime>
+					  <MsgType><![CDATA[news]]></MsgType>
+					  <ArticleCount>10</ArticleCount>
+					  <Articles>
+					  <item>
+					  <Title><![CDATA[宝贝兑换]]></Title> 
+					  <Description><![CDATA[]]></Description>
+					  <PicUrl><![CDATA[http://www.guoyunstore.com/weixin_fwq/images/index_JB.jpg]]></PicUrl>
+					  <Url><![CDATA[https://open.weixin.qq.com/connect/oauth2/authorize?appid=APPID&redirect_uri=http://www.guoyunstore.com/weixin/BBDH/BBDH.php&response_type=code&scope=snsapi_base&state=1#wechat_redirect]]></Url>
+					  </item>
+					  <item>
+					  <Title><![CDATA[450金币]]></Title> 
+					  <Description><![CDATA[1]]></Description>
+					  <PicUrl><![CDATA[http://www.guoyunstore.com/weixin_fwq/images/JXZH.jpg]]></PicUrl>
+					  <Url><![CDATA[https://open.weixin.qq.com/connect/oauth2/authorize?appid=APPID&redirect_uri=http://www.guoyunstore.com/weixin/BBDH/DHYM_450.php&response_type=code&scope=snsapi_base&state=1#wechat_redirect]]></Url>
+					  </item>
+					  <?php
+	header("Content-Type:text/html;charset=utf8");
+	date_default_timezone_set('asia/shanghai');//把时区调整为中国（上海）时区
+	traceHttp();
+ 
+	define("TOKEN", "**********");//Token should be type the one that same as you set on the Service Settings in your Wechat public account backstage
+	$wechatObj = new wechatCallbackapiTest();
+	if (isset($_GET['echostr'])) {
+	    $wechatObj->valid();
+	}else{
+	    $wechatObj->responseMsg();
+	}
+	 
+	class wechatCallbackapiTest
+	{
+	    public function valid()
+	    {
+	        $echoStr = $_GET["echostr"];
+	        if($this->checkSignature()){
+	            echo $echoStr;
+	            exit;
+	        }
+	    }
+	 
+	    private function checkSignature()
+	    {
+	        $signature = $_GET["signature"];
+	        $timestamp = $_GET["timestamp"];
+	        $nonce = $_GET["nonce"];
+	 
+	        $token = TOKEN;
+	        $tmpArr = array($token, $timestamp, $nonce);
+	        sort($tmpArr);
+	        $tmpStr = implode( $tmpArr );
+	        $tmpStr = sha1( $tmpStr );
+	 
+	        if( $tmpStr == $signature ){
+	            return true;
+	        }else{
+	            return false;
+	        }
+	    }
+	 
+	    public function responseMsg()
+	    {
+	        $postStr = $GLOBALS["HTTP_RAW_POST_DATA"];
+	        if (!empty($postStr)){
+	            $postObj = simplexml_load_string($postStr, 'SimpleXMLElement', LIBXML_NOCDATA);
+	            $RX_TYPE = trim($postObj->MsgType);   
+	            //将用户微信发来的内容类型去掉空格后赋值给变量$RX_TYPE。
+	
+	            if ($RX_TYPE == "text")
+	            {
+	              $resultStr = $this->receiveText($postObj);
+				  echo $resultStr;
+				}else if($RX_TYPE == "image")
+	            {$resultStr = $this->receiveImage($postObj);
+				 echo $resultStr;
+				}else if($RX_TYPE == "location")
+				{$resultStr = $this->receiveLocation($postObj);
+	             echo $resultStr;
+				}else if($RX_TYPE == "voice")
+				{
+				$resultStr = $this->receiveVoice($postObj);
+				echo $resultStr;
+				}else if($RX_TYPE == "video")
+				{
+			    $resultStr = $this->receiveVideo($postObj);	
+				echo $resultStr;
+			    }else if($RX_TYPE == "link")
+			    {
+				$resultStr = $this->receiveLink($postObj);
+				echo $resultStr;	
+				}else if($RX_TYPE == "event"){
+				$resultStr_event = $this->receiveEvent($postObj);
+				echo $resultStr_event;
+				}                 
+			}
+	    }
+	
+	    private function receiveText($object)
+	    {
+      //do anything here for recieving text here, the following content in this private function is a real project manage by myself.
+			$funcFlag = 0;
+			$keyword = $object->Content;
+			$keyword = trim(htmlspecialchars_decode($keyword));
+			$username = $object->FromUserName;
+			include('Database Connecting File');//加载数据库密码文件 Including Database Connecting File, IF you use frame like thinkphp, despite this move.
+			$link = @mysql_connect($db_server,$db_user,$db_password,true);
+			if(!$link) { 
+				die("Connect Server Failed: " );
+			}
+			if(!mysql_select_db($db_name,$link)) {
+				die("Select Database Failed: " );
+			}
+			mysql_query("SET NAMES UTF8mb4");
+			
+      //record enliven time
+			$enliven_time = date("Y-m-d H:i:s",time());
+			$sql = 'select * from `enliven_time` where `openid` = "'.$username.'"';
+			$query_setin = mysql_query($sql);
+			$num_setin = mysql_num_rows($query_setin);
+			if($num_setin<1){
+				$sql = 'INSERT INTO `weixin`.`enliven_time` (`id`, `openid`, `enliven_time`) VALUES (NULL, "'.$username.'", "'.$enliven_time.'")';
+				mysql_query($sql);
+			}else{
+				$sql1 = 'UPDATE `enliven_time` SET `enliven_time` = "'.$enliven_time.'" WHERE `openid` = "'.$username.'"';
+				mysql_query($sql1);
+			}
+			
+			//Check the existence of this user in user list, then do the record when the user is new.
+			//判断新库有没有记录
+			$sql_search = "select `USER` from `crm_new` where `USER`='".$username."' limit 1;";
+			$result_search=mysql_query($sql_search);
+			
+			//获取基本信息 The file public.class.php contains all APIs of wechat developing sdk 
+			include('public.class.php');
+			$weixin = new class_weixin_adv("APPID","APPSECRET");//APPID and APPSECRET should be finded on Service Settings
+			$userinfo = $weixin->get_user_info($username);
+			$unionid = $userinfo['unionid'];
+			$nicheng = addslashes($userinfo['nickname']);
+			$current = date("Y-m-d H:i:s");
+			
+			if(mysql_num_rows($result_search)<1){//没有入库新表
+				//入库新表
+				$sql_i="INSERT INTO `crm_new` (`ID`,`USER`,`unionid`,`point`,`nicheng`,`updatetime`) VALUES (NULL,'{$username}','{$unionid}',50,'{$nicheng}','{$current}')";
+				$result_i = mysql_query($sql_i);
+				if(!$result_i){
+					header("Location:https://open.weixin.qq.com/connect/oauth2/authorize?appid=APPID&redirect_uri=http://www.guoyunstore.com".$_SERVER['PHP_SELF']."&response_type=code&scope=snsapi_base&state=1#wechat_redirect");
+				}
+			}
+			//查旧openid
+			$sql_change = "select b.`USER` from `crm_new`a join `crm`b on a.`unionid` = b.`unionid` where a.`USER`='".$username."' limit 1;";
+			$result=mysql_query($sql_change);
+			
+			if(mysql_num_rows($result)<1){//旧表无数据，判定新粉丝
+				//入库旧表
+				$sql_i2="INSERT INTO `crm` (`ID`,`USER`,`unionid`,`point`,`nicheng`,`updatetime`) VALUES (NULL,'{$username}','{$unionid}',50,'{$nicheng}','{$current}')";
+				$result_i2 = mysql_query($sql_i2);
+				if(!$result_i2){
+					header("Location:https://open.weixin.qq.com/connect/oauth2/authorize?appid=APPID&redirect_uri=http://www.guoyunstore.com".$_SERVER['PHP_SELF']."&response_type=code&scope=snsapi_base&state=1#wechat_redirect");
+				}
+			}
+			
+			$rows_change= mysql_fetch_assoc(mysql_query($sql_change));
+			$username = $rows_change['USER'];//openid转换
+			
+			/*开始判定是否参与二维码活动*/
+			if(trim($keyword) == "二维码")
+			{
+	//			$sql = 'SELECT * FROM `genusdaynum` WHERE id = 1';
+	//			$query = mysql_query($sql);
+	//			$rs = mysql_fetch_array($query);
+	//			$num = $rs["num"];//金纳斯日的状态监控，单数为结束，双数为开始。控制此数字的脚本请查看服务器计划任务。
+	//			
+	
+				//优化后获取日期直接判断，跳过数据库及任务计划复杂逻辑
+				$current_day = date("d");//获取今天日
+				$date_num = substr($current_day,strlen($current_day)-1,1);//获取今天日期未数
+				
+				//判断日期未数是否为8,8则开始,否则不开始
+				if ($date_num!=8&&$username!='opWW0t-LGHYeCn3gAllEdk264Vtg'&&$username!='opWW0tyHxqBi55zcS5rtl0bdPh3E')
+				{
+					$contentStr = '活动尚未开始，活动时间为每月8号、18号、28号。';
+					$resultStr = $this->transmitText($object, $contentStr, $funcFlag);
+					return $resultStr;//如果活动尚未开始，返回提示后结束。
+				}
+				$timenow = time();
+				$sql = 'SELECT * FROM `crm` WHERE `USER` ="'.$username.'"';
+				$query = mysql_query($sql);
+				$rs = mysql_fetch_array($query);
+				if ($timenow - $rs["time"] < 86400)  //86400
+				{
+					$erweima = $rs['erweima'];
+					$resttime = 86400-($timenow-$rs["time"]);//剩余时间
+					$url = $weixin->create_qrcode("QR_SCENE", $erweima,$resttime);
+					$resthour = floor($resttime / 3600);
+					$min = floor(($resttime-$resthour*3600)/60);
+					$sec = $resttime-$resthour*3600-$min*60;
+					$contentStr = '您今天获取的二维码将在'.$resthour.'小时'.$min.'分'.$sec.'秒后过期！<a href="http://guoyunstore.com/weixin/genus_day/ercode.php?url='.$url.'&openid='.$username.'">点击此处查看</a>';
+				}
+				else
+				{
+					$erweima = rand(0,2147483646);//二维码参数由32位非0整型组成
+					$erweima = str_replace(0,1,$erweima);//由于二维码参与必须为非0整型，将所有0替换为1
+					$sql = 'SELECT * FROM `crm` WHERE `erweima` = '.$erweima;
+					$query = mysql_query($sql);
+					$row = mysql_num_rows($query);
+					if ($row > 0)
+					{
+						$contentStr = "可能由于网络原因，您获取二维码失败，请重新获取！";
+					}
+					else
+					{
+						$sql = 'UPDATE `crm` SET `erweima`='.$erweima.', `time` = '.$timenow.' WHERE `USER`="'.$username.'"';
+						mysql_query($sql);
+						$url = $weixin->create_qrcode("QR_SCENE", $erweima, "86400");
+						$contentStr = '成功获得二维码，有效期一天，<a href="http://guoyunstore.com/weixin/genus_day/ercode.php?url='.$url.'&openid='.$username.'">点击此处查看</a>';
+					}
+				}
+				$resultStr = $this->transmitText($object, $contentStr, $funcFlag);
+				return $resultStr;
+			}
+			
+			/*开始判定是否参与二维码活动*/
+	//		if(trim($keyword) == "品牌大使系统")
+	//		{
+	//			$erweima = 2147483647;
+	//			include("public.class.new.php");//加载高级接口类
+	//			$weixin = new class_weixin_adv("APPID", "ed759b70605d95a74a16efc32f511370");//实例化一个对象
+	//			$url = $weixin->create_qrcode("QR_SCENE",$erweima,2592000);
+	//			$contentStr = '<a href="'.$url.'">品牌大使系统带参关注二维码</a>';
+	//			$resultStr = $this->transmitText($object,$contentStr,$funcFlag);
+	//			return $resultStr;
+	//		}
+			
+			/*  //幸福双行腺答题活动
+			if(strstr($keyword, "答题")){
+				$content = array();
+				$content[] = array("Title"=>"幸福双行腺互动问答",  "Description"=>"我们经常说，如果卵巢是根，那么胸就是叶，脸就是花，只有拥有了健康的根，才能拥有健康的叶子和美丽的花。", "PicUrl"=>"http://www.guoyunstore.com/weixin/dati/yemei.jpg", "Url" =>"https://open.weixin.qq.com/connect/oauth2/authorize?appid=APPID&redirect_uri=http://www.guoyunstore.com/weixin/dati/index.html?type=baoming&response_type=code&scope=snsapi_base&state=1#wechat_redirect");
+				
+				$resultStr = $this->transmitNews($object, $content, $flag = 0);
+				return $resultStr;
+			}
+			*/
+	//		if(strstr($keyword, "双十一")||strstr($keyword, "双11")){
+	//			$contentStr = "哇塞！您说出本我们的年度关键字 \n<a href='http://genemyth.huobanmall.com/smart.aspx?customerid=4421&url=http://api.open.huobanplus.com/smartPages/13124'>点此打开神秘大门</a>";
+	//			$resultStr = $this->transmitText($object, $contentStr, $funcFlag);
+	//			return $resultStr;
+	//		}
+	
+			
+	
+			if(strstr($keyword, "发货")||strstr($keyword, "到货")||strstr($keyword, "快递")||strstr($keyword, "物流"))
+			{
+				$contentStr = "<a href='http://www.guoyunstore.com/weixin/activity/robot/check.php'>查看物流</a>";
+				$resultStr = $this->transmitText($object, $contentStr, $funcFlag);
+				return $resultStr;
+			}
+	
+			
+			if(strstr($keyword, "修复"))
+			{
+				$contentStr = "抱歉，由于太多人访问，导致部分粉丝今天不能翻翻乐，如果您也玩不了，请点击以下链接修复，然后重试，谢谢\n<a href='https://open.weixin.qq.com/connect/oauth2/authorize?appid=APPID&redirect_uri=http://www.guoyunstore.com/weixin/activity/fanpai/repair.php&response_type=code&scope=snsapi_base&state=1#wechat_redirect'>点此修复翻翻乐</a>";
+				$resultStr = $this->transmitText($object, $contentStr, $funcFlag);
+				return $resultStr;
+			}
+			
+			
+			if(strstr($keyword, "翻翻乐"))
+			{
+				$contentStr = "玩翻翻乐赢金币\n<a href='https://open.weixin.qq.com/connect/oauth2/authorize?appid=APPID&redirect_uri=http://www.guoyunstore.com/weixin/activity/fanpai/index.php&response_type=code&scope=snsapi_base&state=1#wechat_redirect'>【拼手气翻翻乐】</a>";
+				$resultStr = $this->transmitText($object, $contentStr, $funcFlag);
+				return $resultStr;
+			}
+			
+			
+			if(strstr($keyword, "双")||strstr($keyword, "十二"))
+			{
+				$contentStr = "【金因美官方自营店】http://z.icyad.com/h.yOyXJM 点击链接，再选择浏览器打开；或复制这条信息￥60UN087tkoD￥后打开手淘";
+				$resultStr = $this->transmitText($object, $contentStr, $funcFlag);
+				return $resultStr;
+			}
+			
+			if((strstr($keyword, "没")||strstr($keyword, "不"))&&((strstr($keyword, "翻")||strstr($keyword, "牌")||strstr($keyword, "翻乐")||strstr($keyword, "转")||strstr($keyword, "抽")||strstr($keyword, "玩"))||strstr($keyword, "没阅读")||strstr($keyword, "没有阅读")||strstr($keyword,"金币")))
+			{
+				$contentStr = "抱歉，由于太多人访问，导致部分粉丝今天不能翻翻乐，如果您也玩不了，请点击以下链接修复，然后重试，谢谢\n<a href='https://open.weixin.qq.com/connect/oauth2/authorize?appid=APPID&redirect_uri=http://www.guoyunstore.com/weixin/activity/fanpai/repair.php&response_type=code&scope=snsapi_base&state=1#wechat_redirect'>点此修复翻翻乐</a>";
+				$resultStr = $this->transmitText($object, $contentStr, $funcFlag);
+				return $resultStr;
+			}
+			
+			if(strstr($keyword, "排名"))
+			{
+				$contentStr = '<a href="http://www.guoyunstore.com/weixin/MYZX/MYZX_5/">查看最炫美业之星初赛排名榜</a>';
+				$resultStr = $this->transmitText($object, $contentStr, $funcFlag);
+				return $resultStr;
+			}
+			
+			if(strstr($keyword, "首关提示"))
+			{
+				$resultStr = $this->transmitevent_Subscribe($object,"",$flag = 0);
+				return $resultStr;
+			}
+			
+			if(strstr($keyword, "金纳斯女王"))
+			{
+				$contentStr = '<a href="https://open.weixin.qq.com/connect/oauth2/authorize?appid=APPID&redirect_uri=http://www.guoyunstore.com/weixin/activity/queen/zhuye.php&response_type=code&scope=snsapi_base&state=1#wechat_redirect">点击参加金纳斯女王</a>';
+				$resultStr = $this->transmitText($object, $contentStr, $funcFlag);
+				return $resultStr;
+			}
+			
+			if(strstr($keyword, "新品试用"))
+			{
+				$contentStr = '请等待后台审核';
+				$resultStr = $this->transmitText($object, $contentStr, $funcFlag);
+				return $resultStr;
+			}
+			
+			
+			if(strstr($keyword, "签到"))
+			{
+				$content = "亲，金纳斯没有签到哦，签到是金纳斯姐妹品牌金因美的活动哦。您在金纳斯可以通过阅读文章、玩翻翻乐等活动获取金币哦！\n阅读文章点击\n<a href='http://www.guoyunstore.com/weixin/JFMJ/rdyd_index_new.php'>【精选文章】</a>\n玩翻翻乐点击\n<a href='https://open.weixin.qq.com/connect/oauth2/authorize?appid=APPID&redirect_uri=http://www.guoyunstore.com/weixin/activity/fanpai/index.php&response_type=code&scope=snsapi_base&state=1#wechat_redirect'>【拼手气翻翻乐】</a>";
+				//$resultStr = $this->transmitText($object, $contentStr, $funcFlag);
+				$textTpl = "<xml>
+					  <ToUserName><![CDATA[%s]]></ToUserName>
+					  <FromUserName><![CDATA[%s]]></FromUserName>
+					  <CreateTime>%s</CreateTime>
+					  <MsgType><![CDATA[text]]></MsgType>
+					  <Content><![CDATA[%s]]></Content>
+					  <FuncFlag>%d</FuncFlag>
+					  </xml>";
+				$resultStr = sprintf($textTpl, $object->FromUserName, $object->ToUserName, time(), $content, $flag);
+				echo $resultStr;
+				
+				$TY_TCS= "<xml>
+					  <ToUserName><![CDATA[%s]]></ToUserName>
+					  <FromUserName><![CDATA[%s]]></FromUserName>
+					  <CreateTime>%s</CreateTime>
+					  <MsgType><![CDATA[transfer_customer_service]]></MsgType>
+					  </xml>";
+				$resultStr_TCS = sprintf($TY_TCS, $object->FromUserName, $object->ToUserName, time());
+				//$resultStr_TCS = $this->transfer_customer_service($object);
+				echo $resultStr_TCS;
+				//return $resultStr;
+			}
+			
+			if(strstr($keyword, "金币"))
+			{
+				$contentStr = "您在金纳斯可以通过阅读文章、玩翻翻乐等活动获取金币哦！\n阅读文章点击\n<a href='http://www.guoyunstore.com/weixin/JFMJ/rdyd_index_new.php'>【精选文章】</a>\n玩翻翻乐点击\n<a href='https://open.weixin.qq.com/connect/oauth2/authorize?appid=APPID&redirect_uri=http://www.guoyunstore.com/weixin/activity/fanpai/index.php&response_type=code&scope=snsapi_base&state=1#wechat_redirect'>【拼手气翻翻乐】</a>";
+				$resultStr = $this->transmitText($object, $contentStr, $funcFlag);
+				return $resultStr;
+			}
+			
+			if(strstr($keyword, "文章"))
+			{
+				$contentStr = "阅读文章获取金币\n<a href='http://www.guoyunstore.com/weixin/JFMJ/rdyd_index_new.php'>【精选文章】</a>";
+				$resultStr = $this->transmitText($object, $contentStr, $funcFlag);
+				return $resultStr;
+			}
+			
+			if(strstr($keyword, "试用申请")||strstr($keyword, "试用"))
+			{
+				$contentStr = "<a href='https://open.weixin.qq.com/connect/oauth2/authorize?appid=APPID&redirect_uri=http://www.guoyunstore.com/weixin/activity/doubledan/shiyong.php&response_type=code&scope=snsapi_base&state=1#wechat_redirect'>【试用申请】</a>";
+				$resultStr = $this->transmitText($object, $contentStr, $funcFlag);
+				return $resultStr;
+			}
+			
+			
+			if(strstr($keyword, "转吧")||strstr($keyword, "抽奖")||strstr($keyword, "转盘")||strstr($keyword, "摇奖")||strstr($keyword, "转金币")||strstr($keyword, "不能抽奖")||strstr($keyword, "欢乐大转盘"))
+			{
+				$contentStr = "您好，大转盘活动已于2018年6月29日换成“翻翻乐”活动了，现在已经没有大转盘抽奖了哦，玩“拼手气翻翻乐”游戏一样可以获得奖品；翻翻乐在以前大转盘的位置，进入金纳斯公众号→金会员→我要金币→点击“拼手气翻翻乐”→开始翻牌，翻牌结果可在“我的奖品”中查看哦。“拼手气翻翻乐”游戏规则：每次翻牌需支付5金币；如果前一天阅读文章，第二天便可免费获得一次翻牌机会（每天翻牌上限为6次，付金币5次+免费1次）。";
+				$resultStr = $this->transmitText($object, $contentStr, $funcFlag);
+				return $resultStr;
+			}
+			
+			/*
+			
+			if(strstr($keyword, "转吧")||strstr($keyword, "抽奖")||strstr($keyword, "转盘"))
+			{
+				$contentStr = "玩翻翻乐赢金币\n<a href='https://open.weixin.qq.com/connect/oauth2/authorize?appid=APPID&redirect_uri=http://www.guoyunstore.com/weixin/activity/genusdzp/index.php&response_type=code&scope=snsapi_base&state=1#wechat_redirect'>【拼手气翻翻乐】</a>";
+				$resultStr = $this->transmitText($object, $contentStr, $funcFlag);
+				return $resultStr;
+			}
+			*/
+			
+			/*开始判定参与最炫美业之星投票*/
+			 $kw = strtolower(trim($keyword));//将粉丝发来的信息去掉空格，字符串转换成小写
+			 $kwStr1 = substr($kw, 0, 2);
+			 $kwStr2 = substr($kw, 0, 3);
+			 $sql = 'SELECT * FROM `shengfen` WHERE `suoxie`= "'.$kwStr1.'" or `suoxie`="'.$kwStr2.'"';
+			 $query = mysql_query($sql);
+			 if(mysql_num_rows($query) > 0)
+			 {
+				 $rs = mysql_fetch_array($query);
+				 $shijian1 = strtotime($rs['begintime'])-time();//计算地区投票开始时间和现在时间的差
+				 $shijian2 = strtotime($rs['endtime'])-time();//计算地区投票结束时间和当前时间的差
+				 if($shijian1<0 and $shijian2>0)
+				 {//判定当前时间是否为投票时间
+					 $sql = "SELECT * FROM crm_new WHERE `USER` = '{$username}'";
+					 $query = mysql_query($sql);
+					 $rs = mysql_fetch_array($query);
+					 $stat = $rs['toupiao'];
+					 if($stat == '0')
+					 {//判定粉丝是否参与过投票
+						 $sql = 'SELECT * FROM `meirongshi` WHERE `bianhao` = "'.$kw.'"';
+						 $query = mysql_query($sql);
+						 if(mysql_num_rows($query)>0)
+						 {//判定粉丝投票的美容师是否存在
+							 $rs = mysql_fetch_array($query);
+							 $piao = $rs['piaoshu']+1;
+							 $sql = 'UPDATE `meirongshi` SET `piaoshu`='.$piao.' WHERE `bianhao` ="'.$kw.'"';
+							 mysql_query($sql);
+							 $sql = 'UPDATE `crm_new` SET `toupiao` ="'.$kw.'" WHERE `user` = "'.$username.'"';
+							 mysql_query($sql);
+							 $contentStr = "您已经为编号为".$kw."的美容师投上宝贵的一票，感谢您对本活动的大力支持！\n\n<a href='http://www.guoyunstore.com/weixin/MYZX/MYZX_5/'>查看最炫美业之星初赛排名榜</a>";
+							 $resultStr = $this->transmitText($object, $contentStr, $funcFlag);
+							 return $resultStr;
+						 }
+						 else
+						 {
+							 $contentStr = '您正在参与“最炫美业之星”美容师投票，但可能因为您发送的美容师编号不正常，无法查询到该美容师，请仔细检查您发送的美容师编号，确保准确，感谢您对本活动的大力支持！';
+							 $resultStr = $this->transmitText($object, $contentStr, $funcFlag);
+							 return $resultStr;
+						 }
+					 }
+					 else
+					 {
+						 $contentStr = "您已经参与过美容师投票，无法重复参与，感谢您对本活动大力支持！\n\n<a href='http://www.guoyunstore.com/weixin/MYZX/MYZX_5/'>查看最炫美业之星初赛排名榜</a>";
+						 $resultStr = $this->transmitText($object, $contentStr, $funcFlag);
+						 return $resultStr;
+					 } 
+				 }
+				 else if($shijian1 > 0) 
+				 {
+					 $contentStr = '该地区美容师投票活动尚未开始，无法参与投票，感谢您对本活动的大力支持！';
+					 $resultStr = $this->transmitText($object, $contentStr, $funcFlag);
+					 return $resultStr;
+				 }
+				 else if($shijian2 <0)
+				 {
+					 $contentStr = '该地区美容师投票活动已经结束，无法参与投票，感谢您对本活动的大力支持！';
+					 $resultStr = $this->transmitText($object, $contentStr, $funcFlag);
+					 return $resultStr;
+				 }			 
+			 }
+			 /*结束判定参与最炫美业之星活动*/
+			 
+			 
+			if(strstr($keyword, "金纳斯日")){
+				$content = array();
+				$content[] = array("Title"=>"“缘分扫一扫，大礼就送到”",  "Description"=>"", "PicUrl"=>"http://www.guoyunstore.com/weixin/activity/genusday/images/金纳斯日页眉.jpg", "Url" =>"http://www.guoyunstore.com/weixin/activity/genusday/index.php");
+				
+				$resultStr = $this->transmitNews($object, $content, $flag = 0);
+				return $resultStr;
+			}
+			
+			 //金纳斯女王投票活动
+			 if(strstr($keyword, "投票"))
+			{
+				$contentStr = '<a href="https://open.weixin.qq.com/connect/oauth2/authorize?appid=APPID&redirect_uri=http://www.guoyunstore.com/weixin/activity/queen/zhuye.php&response_type=code&scope=snsapi_base&state=1#wechat_redirect">点击参加金纳斯女王</a>';
+				$resultStr = $this->transmitText($object, $contentStr, $funcFlag);
+				return $resultStr;
+			}
+			
+			 if(strstr($keyword, "加冕"))
+			{
+				$contentStr = '<a href="https://open.weixin.qq.com/connect/oauth2/authorize?appid=APPID&redirect_uri=http://www.guoyunstore.com/weixin/activity/queen/zhuye.php&response_type=code&scope=snsapi_base&state=1#wechat_redirect">点击参加金纳斯女王</a>';
+				$resultStr = $this->transmitText($object, $contentStr, $funcFlag);
+				return $resultStr;
+			}
+			
+			if(strstr($keyword, "订单"))
+			{
+				$contentStr = '<a href="http://www.guoyunstore.com/weixin/activity/robot/index.php">智能客服</a>';
+				$resultStr = $this->transmitText($object, $contentStr, $funcFlag);
+				return $resultStr;
+			}
+			
+			
+			if(strstr($keyword, "00"))
+			{
+				$contentStr = '<a href="http://www.guoyunstore.com/weixin/activity/robot/index.php">智能客服</a>';
+				$resultStr = $this->transmitText($object, $contentStr, $funcFlag);
+				return $resultStr;
+			}
+			 
+			 
+			 /*第四届最炫美业之星投票 开始
+		
+			 $zx = strtolower(trim($keyword));//将粉丝发来的信息去掉空格，字符串转换成小写
+			 $zxStr = substr($zx, 0, 2);
+			 $zxStr2 = substr($zx, 2);
+			 $bh = preg_replace('/^0+/','',$zxStr2);
+			 if($zxStr == 'zx'){
+				 
+				 if(time() > '1502812799'){
+					 $contentStr = "该活动已结束";
+						$resultStr = $this->transmitText($object, $contentStr, $funcFlag);
+						return $resultStr;
+				 }else{
+					 //判段是否存在该参赛者
+					$sql = 'select `openid` from `myzx4` where `id` = "'.$bh.'" limit 1';
+					$num_cs = mysql_num_rows(mysql_query($sql));
+					if($num_cs > 0){
+						//判断是否有投票
+						$sql = 'select `openid` from `myzx4_user` where `openid` = "'.$username.'" limit 1';
+						$num_ed = mysql_num_rows(mysql_query($sql));
+						if($num_ed < 1){
+							//插入投票数据
+							$sql = 'INSERT ignore INTO `myzx4_user` (`id`, `openid`, `mid`) VALUES (NULL, "'.$username.'", "'.$bh.'")';
+							mysql_query($sql);
+							
+							$sql = 'UPDATE `myzx4` SET `piaoshu` =  `piaoshu`+1 WHERE `id` = "'.$bh.'"';
+							mysql_query($sql);
+							
+							$contentStr = "谢谢你为 zx".$bh." 号投出宝贵的一票~\n\n<a href='http://www.guoyunstore.com/weixin/activity/MYZX4/zhuye.php'>您可以参与两次抽奖</a>";
+							$resultStr = $this->transmitText($object, $contentStr, $funcFlag);
+							return $resultStr;
+						}else{
+							$contentStr = "你已经投过票，谢谢你对本活动的大力支持！\n\n<a href='http://www.guoyunstore.com/weixin/activity/MYZX4/zhuye.php'>您可以参与两次抽奖</a>";
+							$resultStr = $this->transmitText($object, $contentStr, $funcFlag);
+							return $resultStr;
+						}
+					}else{
+						$contentStr = '您正在参与“最炫美业之星”美容师投票，但可能因为您发送的美容师编号不正常，无法查询到该美容师，请仔细检查您发送的美容师编号，确保准确，感谢您对本活动的大力支持！';
+						$resultStr = $this->transmitText($object, $contentStr, $funcFlag);
+						return $resultStr;
+					} 
+				}
+				 
+				 
+				
+			 }
+			 
+			 第四届最炫美业之星投票 结束*/
+			 
+			 /*开始关键词搜索自动回复文章*/
+			 $sql = 'SELECT * FROM `jfmj` WHERE `l_title` like "%'.$keyword.'%" or `s_title` like "%'.$keyword.'%" ORDER BY `id` DESC LIMIT 0,5';
+			 $query=mysql_query($sql);
+			 $row = mysql_num_rows($query);
+			 //if($row > 0){
+			//	 $content = array();
+			//	 $rs = mysql_fetch_array($query);
+			//	 $content[] = array("Title"=>$rs["l_title"], "Description"=>"", "PicUrl"=>$rs["l_PicUrl"], "Url" =>$rs["l_Url"]);
+			//	 while ($rs = mysql_fetch_array($query))
+			//	 {
+			//		 $content[] = array("Title"=>$rs["l_title"], "Description"=>"", "PicUrl"=>$rs["s_PicUrl"], "Url" =>$rs["l_Url"]);
+			//	 }
+			//	 $resultStr = $this->transmitNews($object, $content, $flag = 0);
+			//	 return $resultStr;
+			//}else{
+				//if(date('w',time())== '0' or date('w',time())== '6' or date('Hi',time()) > '1800'){
+				//	if(!empty($keyword)&&!in_array(date("Y-m-d"),array("2018-06-16","2018-06-17","2018-06-18")))
+				//	{
+				//		$contentStr = '亲您好，我们客服的上班时间是：每周一至周五的早上09：00—12：00，下午13：00—18：00（法定节假日我们也不上班哦），您有什么问题可以在我们上班时间提问，我们看到后会立刻回复哦，感谢您的理解！谢谢！';
+				//		$resultStr = $this->transmitText($object, $contentStr, $funcFlag);
+				//		return $resultStr;
+				//	}
+				//}
+			//}
+			//其他情况调用客服接口进入人工回复
+			$resultStr_TCS = $this->transfer_customer_service($object);
+			return $resultStr_TCS;
+	    }
+		
+		//返回图片
+	    private function receiveImage($object)
+	    {
+	        $funcFlag = 0;
+			$user = $object->FromUserName;
+	        $contentStr = "你发送的是图片，地址为：".$object->PicUrl;
+	        $resultStr = $this->transmitText($object, $contentStr, $funcFlag);
+	        return $resultStr;
+	    }
+		
+		//获取地理位置信息
+	   	private function receiveLocation($object)
+	    {
+	        $funcFlag = 0;
+			$lat  = $object->Location_X;//纬度
+			$lng = $object->Location_Y;//经度
+			$user = $object->FromUserName;//粉丝Openid
+	        //$contentStr = "你发送的是位置，纬度为：".$lat."；经度为：".$lng."；缩放级别为：".$object->Scale."；位置为：".$object->Label."ID为：".$user;
+			
+			include('Database Connecting File');
+			$link = @mysql_connect($db_server,$db_user,$db_password,true);
+			if(!$link) { 
+				die("Connect Server Failed: " );
+			}
+			if(!mysql_select_db($db_name,$link)) {
+				die("Select Database Failed: " );
+			}
+			mysql_query("SET NAMES UTF8mb4");
+			$sql = 'select * from `lbs` where lat<>0 and lat> '.$lat.'-1 and lat<'.$lat.'+1 and lng>'.$lng.'-1 and lng<'.$lng.'+1';
+			$query = mysql_query($sql);
+			$rs = mysql_fetch_array($query);
+			if(mysql_num_rows($query) > 0)
+			{
+			$content = array();
+				$content[] = array("Title"=>"店家：".$rs['name'],  "Description"=>'', "PicUrl"=>"http://www.guoyunstore.com/images/fj.jpg", "Url" =>"");
+				$content[] = array("Title"=>"地址：".$rs['location'],  "Description"=>'aaa', "PicUrl"=>"", "Url" =>"");
+				$content[] = array("Title"=>"电话：".$rs['telephone'],  "Description"=>'aaa', "PicUrl"=>"", "Url" =>"");
+				
+				$resultStr = $this->transmitNews($object, $content, $funcFlag = 0,$name,$location,$telephone);
+			
+	        
+	        return $resultStr;
+			}
+			else
+			{
+				$contentStr = "您所在位置方圆111公里内没有店家，可能您附近的店家信息尚未录入，你也可以通过人工咨询店家信息，感谢您对小金的支持！";
+				$resultStr = $this->transmitText($object, $contentStr, $funcFlag);
+				return $resultStr;
+			}
+	    }
+	
+	    private function receiveVoice($object)
+	    {
+	        $funcFlag = 0;
+			$contentStr = "你发送的是语音，你发送的内容是：".$object->Recognition."";
+			$resultStr = $this->transmitText($object, $contentStr, $funcFlag);
+			return $resultStr;
+	    }
+		
+	    private function receiveVideo($object)
+	    {
+	        $funcFlag = 0;
+	        $contentStr = "你发送的是视频，媒体ID为：".$object->MediaId;
+	        $resultStr = $this->transmitText($object, $contentStr, $funcFlag);
+	        return $resultStr;
+	    }
+	
+	    private function receiveLink($object)
+	    {
+	        $funcFlag = 0;
+	        $contentStr = "你发送的是链接，标题为：".$object->Title."；内容为：".$object->Description."；链接地址为：".$object->Url;
+	        $resultStr = $this->transmitText($object, $contentStr, $funcFlag);
+	        return $resultStr;
+	    }
+	
+	    private function receiveEvent($object)
+	    {
+	        $contentStr = "";
+	        switch ($object->Event)
+	        {
+	            case "subscribe"://关注事件
+				$fromUsername = $object->FromUserName; 
+				include('Database Connecting File');//加载数据库密码文件
+				include('public_function.php');//记录粉丝金币来源明细的公共函数
+				$link = @mysql_connect($db_server,$db_user,$db_password,true);
+				if(!$link) { 
+					die("Connect Server Failed: " );
+				}
+				if(!mysql_select_db($db_name,$link)) {
+					die("Select Database Failed: " );
+				}
+				mysql_query("SET NAMES UTF8mb4");
+				
+				
+				$enliven_time = date("Y-m-d H:i:s",time());
+				$sql = 'select * from `enliven_time` where `openid` = "'.$fromUsername.'"';
+				$query_setin = mysql_query($sql);
+				$num_setin = mysql_num_rows($query_setin);
+				if($num_setin<1){
+					$sql = 'INSERT INTO `weixin`.`enliven_time` (`id`, `openid`, `enliven_time`) VALUES (NULL, "'.$fromUsername.'", "'.$enliven_time.'")';
+					mysql_query($sql);			
+				}else{
+					$sql1 = 'UPDATE `enliven_time` SET `enliven_time` = "'.$enliven_time.'" WHERE `openid` = "'.$fromUsername.'"';
+					mysql_query($sql1);
+				}
+				
+
+				
+				//判断新库有没有记录
+				$sql_search = "select `USER` from `crm_new` where `USER`='".$fromUsername."' limit 1;";
+				$result_search=mysql_query($sql_search);
+				
+				//获取基本信息
+				include('public.class.php');
+				$weixin = new class_weixin_adv("APPID","APPSECRET");
+				$userinfo = $weixin->get_user_info($fromUsername);
+				$unionid = $userinfo['unionid'];
+				$nicheng = addslashes($userinfo['nickname']);
+				$current = date("Y-m-d H:i:s");
+				
+				if(mysql_num_rows($result_search)<1){//没有入库新表
+					
+					//入库新表
+					$sql_i="INSERT INTO `crm_new` (`ID`,`USER`,`unionid`,`point`,`nicheng`,`updatetime`) VALUES (NULL,'{$fromUsername}','{$unionid}',50,'{$nicheng}','{$current}')";
+					$result_i = mysql_query($sql_i);
+				}
+				//查旧openid
+				$sql_change = "select b.`USER` from `crm_new`a join `crm`b on a.`unionid` = b.`unionid` where a.`USER`='".$fromUsername."' limit 1;";
+				$result=mysql_query($sql_change);
+				
+				if (mysql_num_rows($result)>0)//如果数据库存在新关注粉丝的信息，即粉丝曾经关注过金纳斯
+				{
+					$rows_change= mysql_fetch_assoc(mysql_query($sql_change));
+					$fromUsername = $rows_change['USER'];//openid转换
+					
+					$rs=mysql_fetch_array($query);
+					//$name= $rs['USER'];
+					$fen= $rs['point'];//粉丝金币数量
+					if ($fen > 50)//根据政策，取消关注重新关注后，将金币归0处理。而关注时必须给粉丝100金币，所以当粉丝金币高于100时，则更新为100，不足100时维持不变。
+					{
+						$sql = 'UPDATE `crm_new` SET `point`=50 WHERE `USER` = "'.$fromUsername.'"';
+						mysql_query($sql); 
+						jilu($fromUsername, "关注", 50, 50);
+						jilu($fromUsername, "取消关注", -$fen, 0);			  
+					}
+					if ($rs["unionid"] == "0" || $rs["unionid"] == "1" || $rs["unionid"] == "")//如果粉丝的unionid为空，则获取其unionid后更新
+					{
+						$user_info = $weixin->get_user_info($fromUsername);
+						$unionid = $user_info['unionid'];//获取粉丝的unionid
+						$sql = 'UPDATE `crm_new` SET `unionid` = "'.$unionid.'" WHERE `USER` = "'.$fromUsername.'"';
+						mysql_query($sql);
+					}
+	//				$contentStr = "您曾经关注过金纳斯\n我们是专注于美容护肤产品自主研发生产的民族品牌！\n了解品牌详情，请戳\n<a href='http://genuschina.kuaizhan.com/'>【关于容大】</a>\n阅读文章，请戳\n<a href='http://www.guoyunstore.com/weixin/JFMJ/rdyd_index_new.php'>【精选文章】</a>\n积累金币，请戳\n<a href='http://www.guoyunstore.com/weixin/wanttogold/index.php'>【我要金币】</a>\n金币用途，请戳\n<a href='http://www.guoyunstore.com/weixin_fwq/subcribeScoreStrategy.php'>【金币用途】</a>\n姐妹品牌，请戳\n<a href='http://genemyth.huobanmall.com/OAuth2/WeixinAuthorize.aspx?customerid=4421&redirecturl=http://www.guoyunstore.com/jym_weixin/pinpaigs/rukou.php&simpleget=1'>【金因美】</a>";
+					$contentStr = "您的账户里已有50金币：<a href='https://open.weixin.qq.com/connect/oauth2/authorize?appid=APPID&redirect_uri=http://www.guoyunstore.com/weixin/duihuan/index1710.php&response_type=code&scope=snsapi_base&state=1&connect_redirect=1#wechat_redirect'>点我查看</a>\n淘宝：50淘金币≈RMB0.5元\n小金：50金币≈RMB36元\n金币用途及赚取攻略：<a href='http://www.guoyunstore.com/weixin_fwq/subcribeScoreStrategy.php'>点我查看</a>\n\n<a href='http://www.guoyunstore.com/weixin_fwq/mianling20170405jymguanzhuye.php'>点击关注小金姐妹品牌“金因美”</a>\n立即领取试用产品和众多福利";
+					if (!empty($object->EventKey)){
+						$object->EventKey = str_replace("qrscene_","",$object->EventKey);
+						if($object->EventKey==2147483647){
+							$phone = '';
+							$sql_check_login = "select phone from tbsci_userlist where openid = '".$fromUsername."' limit 1";
+							$rows_check_login = mysql_fetch_assoc(mysql_query($sql_check_login));
+							$phone = $rows_check_login['phone'];
+							if($phone!=''){
+								$contentStr = "您的账户里已有50金币：<a href='https://open.weixin.qq.com/connect/oauth2/authorize?appid=APPID&redirect_uri=http://www.guoyunstore.com/weixin/duihuan/index1710.php&response_type=code&scope=snsapi_base&state=1&connect_redirect=1#wechat_redirect'>点我查看</a>\n淘宝：50淘金币≈RMB0.5元\n小金：50金币≈RMB36元\n金币用途及赚取攻略：<a href='http://www.guoyunstore.com/weixin_fwq/subcribeScoreStrategy.php'>点我查看</a>\n\n<a href='http://www.guoyunstore.com/weixin_fwq/mianling20170405jymguanzhuye.php'>点击关注小金姐妹品牌“金因美”</a>\n立即领取试用产品和众多福利\n\n<a href='https://open.weixin.qq.com/connect/oauth2/authorize?appid=APPID
+                &redirect_uri=http://www.guoyunstore.com/weixin/test/anunal_activity/landingpage.php&response_type=code&scope=snsapi_base&state=1#wechat_redirect'>品牌大使系统</a>";
+							}else{
+								$contentStr = "您的账户里已有50金币：<a href='https://open.weixin.qq.com/connect/oauth2/authorize?appid=APPID&redirect_uri=http://www.guoyunstore.com/weixin/duihuan/index1710.php&response_type=code&scope=snsapi_base&state=1&connect_redirect=1#wechat_redirect'>点我查看</a>\n淘宝：50淘金币≈RMB0.5元\n小金：50金币≈RMB36元\n金币用途及赚取攻略：<a href='http://www.guoyunstore.com/weixin_fwq/subcribeScoreStrategy.php'>点我查看</a>\n\n<a href='http://www.guoyunstore.com/weixin_fwq/mianling20170405jymguanzhuye.php'>点击关注小金姐妹品牌“金因美”</a>\n立即领取试用产品和众多福利\n\n<a href='https://open.weixin.qq.com/connect/oauth2/authorize?appid=APPID&redirect_uri=http://www.guoyunstore.com/weixin/test/anunal_activity/login2.php&response_type=code&scope=snsapi_base&state=1#wechat_redirect'>品牌大使系统-签到</a>";
+							}
+						}
+					}
+					//新关注提示 2018-06-13
+					$resultStr_event_GENUS = $this->transmitevent_Subscribe($object,"",$flag = 0);
+					return $resultStr_event_GENUS;
+				}
+				else
+				{
+					//关注粉丝入库
+					$user_info = $weixin->get_user_info($fromUsername);
+					$nicheng = addslashes($user_info['nickname']);//获取粉丝昵称
+					$unionid = $user_info['unionid'];//获取粉丝的unionid
+					$current = date("Y-m-d H:i:s");
+					$sql="INSERT INTO `crm` (`ID`,`USER`,`unionid`,`point`,`nicheng`,`updatetime`) VALUES (NULL,'{$fromUsername}','{$unionid}',50,'{$nicheng}','{$current}')";
+					mysql_query($sql);
+					$sql_search = "select `ID` from `crm` where USER = '".$fromUsername."'";
+					$rows_search = mysql_fetch_assoc(mysql_query($sql_search));
+					jilu($fromUsername, "关注", 50, 50); 
+	//				$contentStr = "美出天际的你，送你50金币\n我们是专注于美容护肤产品自主研发生产的民族品牌！\n了解品牌详情，请戳\n<a href='http://genuschina.kuaizhan.com/'>【关于容大】</a>\n阅读文章，请戳\n<a href='http://www.guoyunstore.com/weixin/JFMJ/rdyd_index_new.php'>【精选文章】</a>\n积累金币，请戳\n<a href='http://www.guoyunstore.com/weixin/wanttogold/index.php'>【我要金币】</a>\n金币用途，请戳\n<a href='http://www.guoyunstore.com/weixin_fwq/subcribeScoreStrategy.php'>【金币用途】</a>\n姐妹品牌，请戳\n<a href='http://genemyth.huobanmall.com/OAuth2/WeixinAuthorize.aspx?customerid=4421&redirecturl=http://www.guoyunstore.com/jym_weixin/pinpaigs/rukou.php&simpleget=1'>【金因美】</a>";
+					$contentStr = "您的账户里已有50金币：<a href='https://open.weixin.qq.com/connect/oauth2/authorize?appid=APPID&redirect_uri=http://www.guoyunstore.com/weixin/duihuan/index1710.php&response_type=code&scope=snsapi_base&state=1&connect_redirect=1#wechat_redirect'>点我查看</a>\n淘宝：50淘金币≈RMB0.5元\n小金：50金币≈RMB36元\n金币用途及赚取攻略：<a href='http://www.guoyunstore.com/weixin_fwq/subcribeScoreStrategy.php'>点我查看</a>\n\n<a href='http://www.guoyunstore.com/weixin_fwq/mianling20170405jymguanzhuye.php'>点击关注小金姐妹品牌“金因美”</a>\n立即领取试用产品和众多福利";
+					if (!empty($object->EventKey))//如果粉丝的二维码参数不为空，即粉丝通过扫描二维码关注，则判定该粉丝是否为好友推荐关注，详细参见“金纳斯日”活动
+					{
+						$object->EventKey = str_replace("qrscene_","",$object->EventKey);//直接获取场景值的ID
+						if($object->EventKey!=2147483647){
+							$sql = 'SELECT USER,point,fensi,genus_day_date FROM `crm` WHERE `erweima` = '.$object->EventKey;//搜索二维码的提供者
+							$query = mysql_query($sql);
+							$row = mysql_num_rows($query);
+							if ($row > 0)
+							{
+								$rs = mysql_fetch_array($query);
+								$rise_user = $rs["USER"];//二维码的提供者Openid
+								$point = $rs["point"]+3;
+								$fensi = $rs["fensi"]+1;
+								$date = date("Y-m-d");
+								$record = strtotime($rs["genus_day_date"]);
+								if($record<strtotime($date)){
+									$sql = 'UPDATE `crm` SET `point` = `point`+3, `fensi` = `fensi` + 1 , genus_day_record = genus_day_record + 1 , genus_day_total = genus_day_total + 1 , genus_day_date = "'.$date.'" WHERE `USER` = "'.$rise_user.'"';//为二维码提供者增加金币并增加1个推荐粉丝数量，数量由政策决定
+								}else{
+									$sql = 'UPDATE `crm` SET `point` = `point`+3, `fensi` = `fensi` + 1 , genus_day_total = genus_day_total + 1  WHERE `USER` = "'.$rise_user.'"';//为二维码提供者增加金币并增加1个推荐粉丝数量，数量由政策决定
+								}
+								$result_add = mysql_query($sql);
+								if($result_add){
+									jilu($rise_user, "金纳斯日推荐粉丝", 3, $point);
+									$data = array(
+							           "touser"=>$rise_user,
+							           "template_id"=>"9DDuZA0AM-LqlShx9COcq5mbvvyosE17v0yhlKloU18",
+							           "url"=>"https://open.weixin.qq.com/connect/oauth2/authorize?appid=APPID&redirect_uri=http://www.guoyunstore.com/weixin/WDJB2.php&response_type=code&scope=snsapi_base&state=1#wechat_redirect",            
+							           "topcolor" => "#C89400",
+							           "data"=>array(
+						                   "first"=>array(
+						                       "value"=>"恭喜，您的好友:",
+						                       "color"=>"#C89400"
+						                   ),
+						                   "keyword1"=>array(
+						                       "value"=>urlencode($nicheng),
+						                       "color"=>"#C89400"
+						                   ),
+						                   "keyword2"=>array(
+						                       "value"=>urlencode($rows_search['id']),
+						                       "color"=>"#C89400"
+						                   ),
+						                   "keyword3"=>array(
+						                       "value"=>urlencode($current),
+						                       "color"=>"#C89400"
+						                   ),
+						                   "remark"=>array(
+						                       "value"=>"通过您的二维码成为了金纳斯的新伙伴，您获得3枚金币并累计1位粉丝到您的推荐粉丝数中，请查收！\n您当前金币为".$point."枚；\n推荐粉丝数为".$fensi."位。",
+						                       "color"=>"#C89400"
+						                   )
+							           )
+									);
+									var_dump($weixin->send_template_message(urldecode(json_encode($data))));//调用客服回复接口，向二维码提供者作反馈信息
+								}
+							}
+		//					$contentStr = "美出天际的你，送你50 金币\n我们是专注于美容护肤产品自主研发生产的民族品牌！\n了解品牌详情，请戳\n<a href='http://genuschina.kuaizhan.com/'>【关于容大】</a>\n阅读文章，请戳\n<a href='http://www.guoyunstore.com/weixin/JFMJ/rdyd_index_new.php'>【精选文章】</a>\n积累金币，请戳\n<a href='http://www.guoyunstore.com/weixin/wanttogold/index.php'>【我要金币】</a>\n金币用途，请戳\n<a href='http://www.guoyunstore.com/weixin_fwq/subcribeScoreStrategy.php'>【金币用途】</a>\n姐妹品牌，请戳\n<a href='http://genemyth.huobanmall.com/OAuth2/WeixinAuthorize.aspx?customerid=4421&redirecturl=http://www.guoyunstore.com/jym_weixin/pinpaigs/rukou.php&simpleget=1'>【金因美】</a>";
+							$contentStr = "您的账户里已有50金币：<a href='https://open.weixin.qq.com/connect/oauth2/authorize?appid=APPID&redirect_uri=http://www.guoyunstore.com/weixin/duihuan/index1710.php&response_type=code&scope=snsapi_base&state=1&connect_redirect=1#wechat_redirect'>点我查看</a>\n淘宝：50淘金币≈RMB0.5元\n小金：50金币≈RMB36元\n金币用途及赚取攻略：<a href='http://www.guoyunstore.com/weixin_fwq/subcribeScoreStrategy.php'>点我查看</a>\n\n8.8-8.15，争当品牌大使开赛，这里有千元大奖，\n<a href='https://open.weixin.qq.com/connect/oauth2/authorize?appid=APPID&redirect_uri=http://www.guoyunstore.com/weixin/activity/myzx4/index.php?id=79&response_type=code&scope=snsapi_base&state=1#wechat_redirect'>你可以点击我参与活动</a>\n<a href='http://www.guoyunstore.com/weixin/activity/MYZX4/zhuye.php'>还可以点击我宝箱开</a>\n\n<a href='http://www.guoyunstore.com/weixin_fwq/mianling20170405jymguanzhuye.php'>点击关注小金姐妹品牌“金因美”</a>\n立即领取试用产品和众多福利";
+						}else{
+							$phone = '';
+							$sql_check_login = "select phone from  tbsci_userlist where openid = '".$fromUsername."' limit 1";
+							$rows_check_login = mysql_fetch_assoc(mysql_query($sql_check_login));
+							$phone = $rows_check_login['phone'];
+							if($phone!=''){
+								$contentStr = "您的账户里已有50金币：<a href='https://open.weixin.qq.com/connect/oauth2/authorize?appid=APPID&redirect_uri=http://www.guoyunstore.com/weixin/duihuan/index1710.php&response_type=code&scope=snsapi_base&state=1&connect_redirect=1#wechat_redirect'>点我查看</a>\n淘宝：50淘金币≈RMB0.5元\n小金：50金币≈RMB36元\n金币用途及赚取攻略：<a href='http://www.guoyunstore.com/weixin_fwq/subcribeScoreStrategy.php'>点我查看</a>\n\n8.8-8.15，争当品牌大使开赛，这里有千元大奖，\n<a href='https://open.weixin.qq.com/connect/oauth2/authorize?appid=APPID&redirect_uri=http://www.guoyunstore.com/weixin/activity/myzx4/index.php?id=79&response_type=code&scope=snsapi_base&state=1#wechat_redirect'>你可以点击我参与活动</a>\n<a href='http://www.guoyunstore.com/weixin/activity/MYZX4/zhuye.php'>还可以点击我宝箱开</a>\n\n<a href='http://www.guoyunstore.com/weixin_fwq/mianling20170405jymguanzhuye.php'>点击关注小金姐妹品牌“金因美”</a>\n立即领取试用产品和众多福利\n\n<a href='https://open.weixin.qq.com/connect/oauth2/authorize?appid=APPID&redirect_uri=http://www.guoyunstore.com/weixin/test/anunal_activity/landingpage.php&response_type=code&scope=snsapi_base&state=1#wechat_redirect'>品牌大使系统</a>";
+							}else{
+								$contentStr = "您的账户里已有50金币：<a href='https://open.weixin.qq.com/connect/oauth2/authorize?appid=APPID&redirect_uri=http://www.guoyunstore.com/weixin/duihuan/index1710.php&response_type=code&scope=snsapi_base&state=1&connect_redirect=1#wechat_redirect'>点我查看</a>\n淘宝：50淘金币≈RMB0.5元\n小金：50金币≈RMB36元\n金币用途及赚取攻略：<a href='http://www.guoyunstore.com/weixin_fwq/subcribeScoreStrategy.php'>点我查看</a>\n\n8.8-8.15，争当品牌大使开赛，这里有千元大奖，\n<a href='https://open.weixin.qq.com/connect/oauth2/authorize?appid=APPID&redirect_uri=http://www.guoyunstore.com/weixin/activity/myzx4/index.php?id=79&response_type=code&scope=snsapi_base&state=1#wechat_redirect'>你可以点击我参与活动</a>\n<a href='http://www.guoyunstore.com/weixin/activity/MYZX4/zhuye.php'>还可以点击我宝箱开</a>\n\n<a href='http://www.guoyunstore.com/weixin_fwq/mianling20170405jymguanzhuye.php'>点击关注小金姐妹品牌“金因美”</a>\n立即领取试用产品和众多福利\n\n<a href='https://open.weixin.qq.com/connect/oauth2/authorize?appid=APPID&redirect_uri=http://www.guoyunstore.com/weixin/test/anunal_activity/login2.php&response_type=code&scope=snsapi_base&state=1#wechat_redirect'>品牌大使系统-签到</a>";
+							}
+						}
+					}
+					//$resultStr = $this->transmittext($object, $contentStr);
+					//return $resultStr;
+					//新关注提示 2018-06-13
+					$resultStr_event_GENUS = $this->transmitevent_Subscribe($object,"",$flag = 0);
+					return $resultStr_event_GENUS;
+				}
+				mysql_close($link);
+				break;
+				  
+				case "SCAN":
+				
+				$contentStr = "我们是专注于美容护肤产品自主研发生产的民族品牌！\n了解品牌详情，请戳\n<a href='http://genuschina.kuaizhan.com/'>【关于容大】</a>\n阅读文章，请戳\n<a href='http://www.guoyunstore.com/weixin/JFMJ/rdyd_index_new.php'>【精选文章】</a>\n积累金币，请戳\n<a href='http://www.guoyunstore.com/weixin/wanttogold/index.php'>【我要金币】</a>\n金币用途，请戳\n<a href='http://www.guoyunstore.com/weixin_fwq/subcribeScoreStrategy.php'>【金币用途】</a>\n姐妹品牌，请戳\n<a href='http://genemyth.huobanmall.com/OAuth2/WeixinAuthorize.aspx?customerid=4421&redirecturl=http://www.guoyunstore.com/jym_weixin/pinpaigs/rukou.php&simpleget=1'>【金因美】</a>";
+				$resultStr = $this->transmittext($object, $contentStr);
+				return $resultStr;
+				
+				case "unsubscribe": 
+				$contentStr = "";
+				break;
+				  
+				case "CLICK":
+		
+				switch ($object->EventKey)
+				{
+					//美业之星
+					/*
+					case "MYZX":
+					$contentStr = "";
+					$resultStr_event_MYZX = $this->transmitevent_MYZX($object, $contentStr);
+					return $resultStr_event_MYZX;
+					break;
+					*/		
+					
+					case "DH":
+					$fromUsername = $object->FromUserName;
+					$contentStr = "";
+					$resultStr_event_DH = $this->transmitevent_DH($object, $contentStr,$flag = 0);
+					return $resultStr_event_DH;
+					break;
+					
+					//加盟方式400
+					case "join":
+					$fromUsername = $object->FromUserName;
+					$contentStr = "";
+					$resultStr_event_join = $this->transmitevent_join($object, $contentStr,$flag = 0);
+					return $resultStr_event_join;
+					break;
+					
+					//第四届最炫美业之星
+					case "MYZX":
+					$fromUsername = $object->FromUserName;
+					$contentStr = "";
+					$resultStr_event_MYZX = $this->transmitevent_MYZX($object, $contentStr,$flag = 0);
+					return $resultStr_event_MYZX;
+					break;
+					
+					//2017春节活动
+					case "chunjie":
+					$fromUsername = $object->FromUserName;
+					$contentStr = "";
+					$resultStr_event_chunjie = $this->transmitevent_chunjie($object, $contentStr,$flag = 0);
+					return $resultStr_event_chunjie;
+					break;
+					
+					
+					case "YZ":
+					$contentStr = "";
+					$resultStr_event_YZ = $this->transmitevent_YZ($object, $contentStr,$flag = 0);
+					return $resultStr_event_YZ;
+					break;
+					
+					case "GENUS":
+					$contentStr = "";
+					$resultStr_event_GENUS = $this->transmitevent_GENUS($object, $contentStr,$flag = 0);
+					return $resultStr_event_GENUS;
+					break;
+					
+					
+					case "QUEEN":  
+					$fromUsername = $object->FromUserName;
+					$contentStr = "";
+					$resultStr_event_queen = $this->transmitevent_queen($object, $contentStr,$flag = 0);
+					return $resultStr_event_queen;
+					break;
+					
+					case "MQJ":
+					$fromUsername = $object->FromUserName;
+					$contentStr = "";
+					$resultStr_event_mqj = $this->transmitevent_mqj($object, $contentStr,$flag = 0);
+					return $resultStr_event_mqj;
+					break;
+					
+					case "CLUB":
+					$fromUsername = $object->FromUserName;
+					$contentStr = '系统开发中，敬请期待！';
+					$resultStr = $this->transmittext($object, $contentStr);
+					return $resultStr;
+					break;
+					/*
+					case "TEST":
+					$fromUsername = $object->FromUserName;
+					$contentStr = "";
+					$resultStr_event_TEST = $this->transmitevent_TEST($object, $contentStr,$flag = 0);
+					return $resultStr_event_TEST;
+					break;
+					*/
+					case "DZP":
+					$fromUsername = $object->FromUserName;
+					$contentStr = "";
+					$resultStr_event_DZP = $this->transmitevent_DZP($object, $contentStr,$flag = 0);
+					return $resultStr_event_DZP;
+					break;
+					
+					case "YD"://元旦乐翻天活动
+					$fromUsername = $object->FromUserName;
+					$contentStr = "";
+					$resultStr_event_YD = $this->transmitevent_YD($object, $contentStr,$flag = 0);
+					return $resultStr_event_YD;
+					break;
+				}
+				break;
+				default:
+				//判断用户48小时
+				$fromUsername = $object->FromUserName; 
+				include('Database Connecting File');//加载数据库密码文件
+				include('public_function.php');//记录粉丝金币来源明细的公共函数
+				$link = @mysql_connect($db_server,$db_user,$db_password,true);
+				if(!$link) { 
+					die("Connect Server Failed: " );
+				}
+				if(!mysql_select_db($db_name,$link)) {
+					die("Select Database Failed: " );
+				}
+				mysql_query("SET NAMES UTF8mb4");
+				
+				$enliven_time = date("Y-m-d H:i:s",time());
+				$sql = 'select * from `enliven_time` where `openid` = "'.$fromUsername.'"';
+				$query_setin = mysql_query($sql);
+				$num_setin = mysql_num_rows($query_setin);
+				if($num_setin<1){
+					$sql = 'INSERT INTO `weixin`.`enliven_time` (`id`, `openid`, `enliven_time`) VALUES (NULL, "'.$fromUsername.'", "'.$enliven_time.'")';
+					mysql_query($sql);			
+				}else{
+					$sql1 = 'UPDATE `enliven_time` SET `enliven_time` = "'.$enliven_time.'" WHERE `openid` = "'.$fromUsername.'"';
+					mysql_query($sql1);
+				}
+				
+				$contentStr = "receive a new event: ".$object->Event;
+				break;
+	        }
+	    }
+		
+		private function transmitText($object, $content, $flag = 0)
+		{
+		   $textTpl = "<xml>
+					  <ToUserName><![CDATA[%s]]></ToUserName>
+					  <FromUserName><![CDATA[%s]]></FromUserName>
+					  <CreateTime>%s</CreateTime>
+					  <MsgType><![CDATA[text]]></MsgType>
+					  <Content><![CDATA[%s]]></Content>
+					  <FuncFlag>%d</FuncFlag>
+					  </xml>";
+			$resultStr = sprintf($textTpl, $object->FromUserName, $object->ToUserName, time(), $content, $flag);
+			return $resultStr;	
+		}
+		
+		private function transmitNews($object, $newsArray, $flag = 0)
+	    {
+	        if(!is_array($newsArray)){
+	            return;
+	        }
+	        $itemTpl = "<item>
+	        <Title><![CDATA[%s]]></Title>
+	        <Description><![CDATA[%s]]></Description>
+	        <PicUrl><![CDATA[%s]]></PicUrl>
+	        <Url><![CDATA[%s]]></Url>
+		    </item>
+			";
+	        $item_str = "";
+	        foreach ($newsArray as $item){
+	            $item_str .= sprintf($itemTpl, $item['Title'], $item['Description'], $item['PicUrl'], $item['Url']);
+	        }
+	        $xmlTpl = "<xml>
+			<ToUserName><![CDATA[%s]]></ToUserName>
+			<FromUserName><![CDATA[%s]]></FromUserName>
+			<CreateTime>%s</CreateTime>
+			<MsgType><![CDATA[news]]></MsgType>
+			<ArticleCount>%s</ArticleCount>
+			<Articles>
+			$item_str</Articles>
+			</xml>";
+	
+	        $result = sprintf($xmlTpl, $object->FromUserName, $object->ToUserName, time(), count($newsArray));
+	        return $result;
+	    }
+		/*
+		<item>
+			<Title><![CDATA[【总决赛人气排行榜】]]></Title> 
+			<Description><![CDATA[1]]></Description>
+			<PicUrl><![CDATA[http://www.guoyunstore.com/weixin/images/MYZX/zjs.jpg]]></PicUrl>
+			<Url><![CDATA[www.guoyunstore.com/weixin/MYZX/chek.php]]></Url>
+			</item>
+			
+			  <item>
+		  <Title><![CDATA[金因美养白系列]]></Title> 
+		  <Description><![CDATA[1]]></Description>
+		  <PicUrl><![CDATA[http://www.guoyunstore.com/weixin_fwq/images/JYM.jpg]]></PicUrl>
+		  <Url><![CDATA[http://www.guoyunstore.com/weixin/MYKT/JYM_index.html]]></Url>
+		  </item>
+		  
+		   <item>
+		  <Title><![CDATA[金纳斯至尊童颜5+2项目]]></Title> 
+		  <Description><![CDATA[1]]></Description>
+		  <PicUrl><![CDATA[http://www.guoyunstore.com/weixin_fwq/images/MY_ZZTY.jpg]]></PicUrl>
+		  <Url><![CDATA[http://www.guoyunstore.com/weixin/MYKT/MY_ZZTY.html]]></Url>
+		  </item>
+			
+			*/
+		
+		private function transfer_customer_service($object){
+			$TY_TCS= "<xml>
+					  <ToUserName><![CDATA[%s]]></ToUserName>
+					  <FromUserName><![CDATA[%s]]></FromUserName>
+					  <CreateTime>%s</CreateTime>
+					  <MsgType><![CDATA[transfer_customer_service]]></MsgType>
+					  </xml>";
+			$resultStr_TCS = sprintf($TY_TCS, $object->FromUserName, $object->ToUserName, time());
+			return $resultStr_TCS;
+		}
+		/*
+		<item>
+		<Title><![CDATA[一【活动亮点】]]></Title> 
+		<Description><![CDATA[1]]></Description>
+		<PicUrl><![CDATA[http://www.guoyunstore.com/weixin/images/MYZX/index_1.jpg]]></PicUrl>
+		<Url><![CDATA[www.guoyunstore.com/weixin/MYZX/MYZX_2/LD.html]]></Url>
+		</item>
+		
+		<item>
+		<Title><![CDATA[二【赛事设置】]]></Title> 
+		<Description><![CDATA[1]]></Description>
+		<PicUrl><![CDATA[http://www.guoyunstore.com/weixin/images/MYZX/index_2.jpg]]></PicUrl>
+		<Url><![CDATA[www.guoyunstore.com/weixin/MYZX/MYZX_2/SS.html]]></Url>
+		</item>
+								   <item>
+		<Title><![CDATA[三【获奖名单】]]></Title> 
+		<Description><![CDATA[1]]></Description>
+		<PicUrl><![CDATA[http://www.guoyunstore.com/weixin/images/MYZX/index_3.jpg]]></PicUrl>
+		<Url><![CDATA[www.guoyunstore.com/weixin/MYZX/hjd.html]]></Url>
+		</item>
+		<item>
+		<Title><![CDATA[四【动态跟踪】]]></Title> 
+		<Description><![CDATA[1]]></Description>
+		<PicUrl><![CDATA[http://www.guoyunstore.com/weixin/images/MYZX/index_4.jpg]]></PicUrl>
+		<Url><![CDATA[www.guoyunstore.com/weixin/MYZX/dtgz.html]]></Url>
+		</item>
+		*/
+		
+		//第三届最炫美业之星
+		/*
+		private function transmitevent_MYZX($object, $content, $flag = 0)
+	    {
+	         $newsTpl = "<xml>
+						<ToUserName><![CDATA[%s]]></ToUserName>
+						<FromUserName><![CDATA[%s]]></FromUserName>
+						<CreateTime>%s</CreateTime>
+						<MsgType><![CDATA[news]]></MsgType>
+						<ArticleCount>5</ArticleCount>
+						<Articles>
+						<item>
+						<Title><![CDATA[第三届“最炫美业之星]]></Title> 
+						<Description><![CDATA[第三届“最炫美业之星]]></Description>
+						<PicUrl><![CDATA[http://www.guoyunstore.com/weixin/images/MYZX/yemei3.jpg]]></PicUrl>
+						<Url><![CDATA[https://open.weixin.qq.com/connect/oauth2/authorize?appid=APPID&redirect_uri=http://www.guoyunstore.com/weixin/JFMJ/JFMJ_20160225180317.php&response_type=code&scope=snsapi_base&state=1#wechat_redirect]]></Url>
+						</item>
+						
+						<item>
+						<Title><![CDATA[各赛区人气投票排行榜]]></Title> 
+						<Description><![CDATA[1]]></Description>
+						<PicUrl><![CDATA[http://www.guoyunstore.com/weixin/images/MYZX/index_1.jpg]]></PicUrl>
+						<Url><![CDATA[http://www.guoyunstore.com/weixin/MYZX/MYZX_3/pm/check_chu.php]]></Url>
+						</item>
+						
+						<item>
+						<Title><![CDATA[最炫美业之星代购预售卡]]></Title> 
+						<Description><![CDATA[1]]></Description>
+						<PicUrl><![CDATA[http://www.guoyunstore.com/weixin/test/cici_offlinepayment/img/888.jpg]]></PicUrl>
+						<Url><![CDATA[https://open.weixin.qq.com/connect/oauth2/authorize?appid=APPID&redirect_uri=http://www.guoyunstore.com/weixin/test/cici_offlinepayment/prepurchase.php&response_type=code&scope=snsapi_base&state=1&from=singlemessage&isappinstalled=0#wechat_redirect]]></Url>
+						</item>
+						
+						<item>
+						<Title><![CDATA[第三届最炫美业之星总决赛邀请函]]></Title> 
+						<Description><![CDATA[1]]></Description>
+						<PicUrl><![CDATA[http://www.guoyunstore.com/weixin/test/cao_AugustBigEvent/img/xiaotu2.jpg]]></PicUrl>
+						<Url><![CDATA[http://q.eqxiu.com/s/z7LJV3cP?eqrcode=1&from=singlemessage&isappinstalled=0]]></Url>
+						</item>
+						
+						<item>
+						<Title><![CDATA[点燃梦想，传递火炬]]></Title>
+						<Description><![CDATA[1]]></Description>
+						<PicUrl><![CDATA[http://www.guoyunstore.com/weixin/test/torch/images/xiaotu.jpg]]></PicUrl>
+						<Url><![CDATA[http://www.guoyunstore.com/weixin/test/torch/index.php]]></Url>
+						</item>
+						
+						<FuncFlag>0</FuncFlag>
+						</xml>";
+			$resultStr_event_MYZX = sprintf($newsTpl, $object->FromUserName, $object->ToUserName, time(), $content, $flag);
+	        return $resultStr_event_MYZX;
+	    }
+		*/
+		
+		
+		//第四届最炫美业之星	
+		private function transmitevent_MYZX($object, $content, $flag = 0)
+	    {
+	         $newsTpl = "<xml>
+						<ToUserName><![CDATA[%s]]></ToUserName>
+						<FromUserName><![CDATA[%s]]></FromUserName>
+						<CreateTime>%s</CreateTime>
+						<MsgType><![CDATA[news]]></MsgType>
+						<ArticleCount>3</ArticleCount>
+						<Articles>
+						
+						<item>
+						<Title><![CDATA[第四届“最炫美业之星”初赛]]></Title> 
+						<Description><![CDATA[第四届“最炫美业之星”]]></Description>
+						<PicUrl><![CDATA[http://www.guoyunstore.com/weixin/MYZX/MYZX_4/gone/images/4yemei.jpg]]></PicUrl>
+						<Url><![CDATA[http://www.guoyunstore.com/weixin/activity/MYZX4/chusai.php]]></Url>
+						</item>
+						
+						<item>
+						<Title><![CDATA[民族品牌大使系统]]></Title> 
+						<Description><![CDATA[1]]></Description>
+						<PicUrl><![CDATA[http://www.guoyunstore.com/weixin/images/MYZX/index_1.jpg]]></PicUrl>
+						<Url><![CDATA[https://open.weixin.qq.com/connect/oauth2/authorize?appid=APPID&redirect_uri=http://www.guoyunstore.com/weixin/test/anunal_activity/landingpage.php&response_type=code&scope=snsapi_base&state=1#wechat_redirect]]></Url>
+						</item>
+						
+						<item>
+						<Title><![CDATA[美业之星往届风采]]></Title> 
+						<Description><![CDATA[1]]></Description>
+						<PicUrl><![CDATA[http://www.guoyunstore.com/weixin/MYZX/IMG/80x80.jpg]]></PicUrl>
+						<Url><![CDATA[http://www.guoyunstore.com/weixin/myzx/myzx_4/gone/]]></Url>
+						</item>
+						
+						<FuncFlag>0</FuncFlag>
+						</xml>";
+			$resultStr_event_MYZX = sprintf($newsTpl, $object->FromUserName, $object->ToUserName, time(), $content, $flag);
+	        return $resultStr_event_MYZX;
+	    }
+	    
+		private function transmitevent_DH($object, $contentStr,$flag = 0)
+	    {
+	         $DHTpl = "<xml>
+					  <ToUserName><![CDATA[%s]]></ToUserName>
+					  <FromUserName><![CDATA[%s]]></FromUserName>
+					  <CreateTime>%s</CreateTime>
+					  <MsgType><![CDATA[news]]></MsgType>
+					  <ArticleCount>10</ArticleCount>
+					  <Articles>
+					  <item>
+					  <Title><![CDATA[宝贝兑换]]></Title> 
+					  <Description><![CDATA[]]></Description>
+					  <PicUrl><![CDATA[http://www.guoyunstore.com/weixin_fwq/images/index_JB.jpg]]></PicUrl>
+					  <Url><![CDATA[https://open.weixin.qq.com/connect/oauth2/authorize?appid=APPID&redirect_uri=http://www.guoyunstore.com/weixin/BBDH/BBDH.php&response_type=code&scope=snsapi_base&state=1#wechat_redirect]]></Url>
+					  </item>
+					  <item>
+					  <Title><![CDATA[450金币]]></Title> 
+					  <Description><![CDATA[1]]></Description>
+					  <PicUrl><![CDATA[http://www.guoyunstore.com/weixin_fwq/images/JXZH.jpg]]></PicUrl>
+					  <Url><![CDATA[https://open.weixin.qq.com/connect/oauth2/authorize?appid=APPID&redirect_uri=http://www.guoyunstore.com/weixin/BBDH/DHYM_450.php&response_type=code&scope=snsapi_base&state=1#wechat_redirect]]></Url>
+					  </item>
+					  
+					  <item>
+					  <Title><![CDATA[680金币]]></Title> 
+					  <Description><![CDATA[1]]></Description>
+					  <PicUrl><![CDATA[http://www.guoyunstore.com/weixin_fwq/images/680_CSMM.jpg]]></PicUrl>
+					  <Url><![CDATA[https://open.weixin.qq.com/connect/oauth2/authorize?appid=APPID&redirect_uri=http://www.guoyunstore.com/weixin/BBDH/DHYM_680.php&response_type=code&scope=snsapi_base&state=1#wechat_redirect]]></Url>
+					  </item>
+												 <item>
+					  <Title><![CDATA[980金币]]></Title> 
+					  <Description><![CDATA[1]]></Description>
+					  <PicUrl><![CDATA[http://www.guoyunstore.com/weixin_fwq/images/PHS.jpg]]></PicUrl>
+					  <Url><![CDATA[https://open.weixin.qq.com/connect/oauth2/authorize?appid=APPID&redirect_uri=http://www.guoyunstore.com/weixin/BBDH/DHYM_980.php&response_type=code&scope=snsapi_base&state=1#wechat_redirect]]></Url>
+					  </item>
+					  
+					  <item>
+					  <Title><![CDATA[1380金币]]></Title> 
+					  <Description><![CDATA[1]]></Description>
+					  <PicUrl><![CDATA[http://www.guoyunstore.com/weixin_fwq/images/1380_HLXFT.jpg]]></PicUrl>
+					  <Url><![CDATA[https://open.weixin.qq.com/connect/oauth2/authorize?appid=APPID&redirect_uri=http://www.guoyunstore.com/weixin/BBDH/DHYM_1380.php&response_type=code&scope=snsapi_base&state=1#wechat_redirect]]></Url>
+					  </item>
+												 <item>
+					  <Title><![CDATA[1980金币]]></Title> 
+					  <Description><![CDATA[1]]></Description>
+					  <PicUrl><![CDATA[http://www.guoyunstore.com/weixin_fwq/images/MXS.jpg]]></PicUrl>
+					  <Url><![CDATA[https://open.weixin.qq.com/connect/oauth2/authorize?appid=APPID&redirect_uri=http://www.guoyunstore.com/weixin/BBDH/DHYM_1980.php&response_type=code&scope=snsapi_base&state=1#wechat_redirect]]></Url>
+					  </item>
+					  
+					  <item>
+					  <Title><![CDATA[3860金币]]></Title> 
+					  <Description><![CDATA[1]]></Description>
+					  <PicUrl><![CDATA[http://www.guoyunstore.com/weixin_fwq/images/3860_XLH.jpg]]></PicUrl>
+					  <Url><![CDATA[https://open.weixin.qq.com/connect/oauth2/authorize?appid=APPID&redirect_uri=http://www.guoyunstore.com/weixin/BBDH/DHYM_3860.php&response_type=code&scope=snsapi_base&state=1#wechat_redirect]]></Url>
+					  </item>
+					  
+					  <item>
+					  <Title><![CDATA[6800金币]]></Title> 
+					  <Description><![CDATA[1]]></Description>
+					  <PicUrl><![CDATA[http://www.guoyunstore.com/weixin_fwq/images/6800_LPT.jpg]]></PicUrl>
+					  <Url><![CDATA[https://open.weixin.qq.com/connect/oauth2/authorize?appid=APPID&redirect_uri=http://www.guoyunstore.com/weixin/BBDH/DHYM_6800.php&response_type=code&scope=snsapi_base&state=1#wechat_redirect]]></Url>
+					  </item>
+												 <item>
+					  <Title><![CDATA[9800金币]]></Title> 
+					  <Description><![CDATA[1]]></Description>
+					  <PicUrl><![CDATA[http://www.guoyunstore.com/weixin_fwq/images/BLD.jpg]]></PicUrl>
+					  <Url><![CDATA[https://open.weixin.qq.com/connect/oauth2/authorize?appid=APPID&redirect_uri=http://www.guoyunstore.com/weixin/BBDH/DHYM_9800.php&response_type=code&scope=snsapi_base&state=1#wechat_redirect]]></Url>
+					  </item>
+					  <item>
+					  <Title><![CDATA[点击此处查看您的历史兑换]]></Title> 
+					  <Description><![CDATA[1]]></Description>
+					  <PicUrl><![CDATA[]]></PicUrl>
+					  <Url><![CDATA[https://open.weixin.qq.com/connect/oauth2/authorize?appid=APPID&redirect_uri=http://www.guoyunstore.com/weixin/BBDH/chaxun.php&response_type=code&scope=snsapi_base&state=1#wechat_redirect]]></Url>
+					  </item>
+					  <FuncFlag>0</FuncFlag>
+					  </xml>";
+			$resultStr_event_DH = sprintf($DHTpl, $object->FromUserName, $object->ToUserName, time(), $content, $flag);
+	        return $resultStr_event_DH;
+	    }
+		
+		private function transmitevent_join($object, $contentStr,$flag = 0)
+	    {
+	         $joinTpl = "<xml>
+						  <ToUserName><![CDATA[%s]]></ToUserName>
+						  <FromUserName><![CDATA[%s]]></FromUserName>
+						  <CreateTime>%s</CreateTime>
+						  <MsgType><![CDATA[news]]></MsgType>
+						  <ArticleCount>2</ArticleCount>
+						  <Articles>
+						  
+						  <item>
+						  <Title><![CDATA[加盟方式400]]></Title> 
+						  <Description><![CDATA[1]]></Description>
+						  <PicUrl><![CDATA[http://www.guoyunstore.com/images/400.jpg]]></PicUrl>
+						  <Url><![CDATA[]]></Url>
+						  </item>
+						  <item>
+						  <Title><![CDATA[容大生物技术有限公司邀请您加盟\n详情咨询，请拨打\n全国服务热线：400-019-0918\n地址：广州市荔湾区芳村大道东200号48、49栋\n邮编：510370]]></Title> 
+						  <Description><![CDATA[1]]></Description>
+						  <PicUrl><![CDATA[]]></PicUrl>
+						  <Url><![CDATA[http://www.guoyunstore.com/weixin/JFYZ.html]]></Url>
+						  </item>
+						 
+						  <FuncFlag>0</FuncFlag>
+						  </xml>";
+			$resultStr_event_join = sprintf($joinTpl, $object->FromUserName, $object->ToUserName, time(), $content, $flag);
+	        return $resultStr_event_join;
+	    }
+		
+		//2017春节活动
+		private function transmitevent_chunjie($object, $contentStr,$flag = 0)
+	    {
+	         $chunjieTpl = "<xml>
+						  <ToUserName><![CDATA[%s]]></ToUserName>
+						  <FromUserName><![CDATA[%s]]></FromUserName>
+						  <CreateTime>%s</CreateTime>
+						  <MsgType><![CDATA[news]]></MsgType>
+						  <ArticleCount>3</ArticleCount>
+						  <Articles>
+						  
+						  <item>
+						  <Title><![CDATA[过年了，和家人一起“欢宵打蛋”吧！]]></Title> 
+						  <Description><![CDATA[1]]></Description>
+						  <PicUrl><![CDATA[http://www.guoyunstore.com/weixin/activity/DoubleDan/images/jp/1.jpg]]></PicUrl>
+						  <Url><![CDATA[https://open.weixin.qq.com/connect/oauth2/authorize?appid=APPID&redirect_uri=http://www.guoyunstore.com/weixin/activity/DoubleDan/shouye.php&response_type=code&scope=snsapi_base&state=1#wechat_redirect]]></Url>
+						  </item>
+						  
+						  <item>
+						  <Title><![CDATA[幸运获奖者名单]]></Title> 
+						  <Description><![CDATA[1]]></Description>
+						  <PicUrl><![CDATA[http://www.guoyunstore.com/weixin/activity/DoubleDan/images/y1.jpg]]></PicUrl>
+						  <Url><![CDATA[http://www.guoyunstore.com/weixin/activity/doubledan/luck_shouye.php]]></Url>
+						  </item>
+						  
+						  <item>
+						  <Title><![CDATA[明星产品试用名单]]></Title> 
+						  <Description><![CDATA[1]]></Description>
+						  <PicUrl><![CDATA[http://www.guoyunstore.com/weixin/activity/DoubleDan/images/y2.jpg]]></PicUrl>
+						  <Url><![CDATA[http://www.guoyunstore.com/weixin/activity/doubledan/shiyong_md.php]]></Url>
+						  </item>
+						 
+						  <FuncFlag>0</FuncFlag>
+						  </xml>";
+			$resultStr_event_chunjie = sprintf($chunjieTpl, $object->FromUserName, $object->ToUserName, time(), $content, $flag);
+	        return $resultStr_event_chunjie;
+	    }
+		
+		private function transmitevent_YZ($object, $contentStr, $flag = 0)
+	    {
+	         $YZTpl = "<xml>
+					  <ToUserName><![CDATA[%s]]></ToUserName>
+					  <FromUserName><![CDATA[%s]]></FromUserName>
+					  <CreateTime>%s</CreateTime>
+					  <MsgType><![CDATA[news]]></MsgType>
+					  <ArticleCount>2</ArticleCount>
+					  <Articles>
+					  <item>
+					  <Title><![CDATA[金粉驿站]]></Title> 
+					  <Description><![CDATA[1]]></Description>
+					  <PicUrl><![CDATA[http://www.guoyunstore.com/weixin_fwq/images/JFYZ.png]]></PicUrl>
+					  <Url><![CDATA[http://www.guoyunstore.com/weixin/JFYZ.html]]></Url>
+					  </item>
+					  <item>
+					  <Title><![CDATA[来金粉驿站，来最近的美容院享受金纳斯服务吧！]]></Title> 
+					  <Description><![CDATA[1]]></Description>
+					  <PicUrl><![CDATA[]]></PicUrl>
+					  <Url><![CDATA[http://www.guoyunstore.com/weixin/JFYZ.html]]></Url>
+					  </item>
+					  <FuncFlag>0</FuncFlag>
+					  </xml>";
+			$resultStr_event_YZ = sprintf($YZTpl, $object->FromUserName, $object->ToUserName, time(), $content, $flag);
+	        return $resultStr_event_YZ;
+	    }
+		
+		
+		private function transmitevent_queen($object, $contentStr, $flag = 0)
+	    {
+	         $queenTpl = "<xml>
+					  <ToUserName><![CDATA[%s]]></ToUserName>
+					  <FromUserName><![CDATA[%s]]></FromUserName>
+					  <CreateTime>%s</CreateTime>
+					  <MsgType><![CDATA[news]]></MsgType>
+					  <ArticleCount>5</ArticleCount>
+					  <Articles>
+					  <item>
+					  <Title><![CDATA[太阳女神争夺赛]]></Title>
+					  <Description><![CDATA[]]></Description>
+					  <PicUrl><![CDATA[http://www.guoyunstore.com/weixin/test/sungoddess_list/images/yemei.jpg]]></PicUrl>
+					  <Url><![CDATA[http://www.guoyunstore.com/weixin/test/sungoddess/gz.php]]></Url>
+					  </item>
+					  
+					  <item>
+					  <Title><![CDATA[领取代金券]]></Title>
+					  <Description><![CDATA[1]]></Description>
+					  <PicUrl><![CDATA[http://www.guoyunstore.com/weixin/test/jnsfs/images/xiaotu.jpg]]></PicUrl>
+					  <Url><![CDATA[https://open.weixin.qq.com/connect/oauth2/authorize?appid=APPID&redirect_uri=http://www.guoyunstore.com/weixin/test/jnsfs/kk.php&response_type=code&scope=snsapi_base&state=1#wechat_redirect]]></Url>
+					  </item>
+					  
+					  <item>
+					  <Title><![CDATA[我要参赛]]></Title>
+					  <Description><![CDATA[1]]></Description>
+					  <PicUrl><![CDATA[http://www.guoyunstore.com/weixin/test/sungoddess/images/xiaotu2.jpg]]></PicUrl>
+					  <Url><![CDATA[https://open.weixin.qq.com/connect/oauth2/authorize?appid=APPID&redirect_uri=http://www.guoyunstore.com/weixin/test/sungoddess_img/mt.php&response_type=code&scope=snsapi_base&state=1#wechat_redirect]]></Url>
+					  </item>
+					  
+					  <item>
+					  <Title><![CDATA[选手列表]]></Title>
+					  <Description><![CDATA[1]]></Description>
+					  <PicUrl><![CDATA[http://www.guoyunstore.com/weixin/test/sungoddess/images/xiaotu3.jpg]]></PicUrl>
+					  <Url><![CDATA[https://open.weixin.qq.com/connect/oauth2/authorize?appid=APPID&redirect_uri=http://www.guoyunstore.com/weixin/test/sungoddess_list/index.html&response_type=code&scope=snsapi_base&state=1#wechat_redirect]]></Url>
+					  </item>
+					  
+					  <item>
+					  <Title><![CDATA[获奖信息]]></Title>
+					  <Description><![CDATA[1]]></Description>
+					  <PicUrl><![CDATA[http://www.guoyunstore.com/weixin/test/sungoddess/images/xiaotu4.jpg]]></PicUrl>
+					  <Url><![CDATA[https://open.weixin.qq.com/connect/oauth2/authorize?appid=APPID&redirect_uri=http://www.guoyunstore.com/weixin/test/sungoddess/mc.php&response_type=code&scope=snsapi_base&state=STATE#wechat_redirect]]></Url>
+					  </item>
+				
+					  
+					  
+					  <FuncFlag>0</FuncFlag>
+					  </xml>";
+			$resultStr_event_queen = sprintf($queenTpl, $object->FromUserName, $object->ToUserName, time(), $content, $flag);
+	        return $resultStr_event_queen;
+	    }
+		
+					
+		/*金纳斯女王
+		private function transmitevent_queen($object, $contentStr, $flag = 0)
+	    {
+	         $queenTpl = "<xml>
+					  <ToUserName><![CDATA[%s]]></ToUserName>
+					  <FromUserName><![CDATA[%s]]></FromUserName>
+					  <CreateTime>%s</CreateTime>
+					  <MsgType><![CDATA[news]]></MsgType>
+					  <ArticleCount>2</ArticleCount>
+					  <Articles>
+					  <item>
+					  <Title><![CDATA[第一届金纳斯女王（2014.9~2014-11）]]></Title> 
+					  <Description><![CDATA[]]></Description>
+					  <PicUrl><![CDATA[http://www.guoyunstore.com/weixin/queen/images/queen_index.jpg]]></PicUrl>
+					  <Url><![CDATA[https://open.weixin.qq.com/connect/oauth2/authorize?appid=APPID&redirect_uri=http://www.guoyunstore.com/weixin/queen/index.php?type=baoming&response_type=code&scope=snsapi_base&state=1#wechat_redirect]]></Url>
+					  </item>
+					  <item>
+					  <Title><![CDATA[活动手册]]></Title> 
+					  <Description><![CDATA[1]]></Description>
+					  <PicUrl><![CDATA[http://www.guoyunstore.com/weixin/queen/images/queen_2.jpg]]></PicUrl>
+					  <Url><![CDATA[http://www.guoyunstore.com/weixin/queen/haibao.html]]></Url>
+					  </item>
+					  <FuncFlag>0</FuncFlag>
+					  </xml>";
+			$resultStr_event_queen = sprintf($queenTpl, $object->FromUserName, $object->ToUserName, time(), $content, $flag);
+	        return $resultStr_event_queen;
+	    }
+		*/
+		
+		
+		/*
+		
+		private function transmitevent_mqj($object, $contentStr, $flag = 0)
+	    {
+	         $mqjTpl = "<xml>
+					  <ToUserName><![CDATA[%s]]></ToUserName>
+					  <FromUserName><![CDATA[%s]]></FromUserName>
+					  <CreateTime>%s</CreateTime>
+					  <MsgType><![CDATA[news]]></MsgType>
+					  <ArticleCount>2</ArticleCount>
+					  <Articles>
+					  <item>
+					  <Title><![CDATA[脂肪修修秀]]></Title> 
+					  <Description><![CDATA[]]></Description>
+					  <PicUrl><![CDATA[http://www.guoyunstore.com/weixin/test/cao_xiuyixiu2/img/banner.jpg]]></PicUrl>
+					  <Url><![CDATA[https://open.weixin.qq.com/connect/oauth2/authorize?appid=APPID&redirect_uri=http://www.guoyunstore.com/weixin/JFMJ/JFMJ_20160602153751.php&response_type=code&scope=snsapi_base&state=1#wechat_redirect]]></Url>
+					  </item>
+					  <item>
+					  <Title><![CDATA[脂肪修修秀]]></Title>
+					  <Description><![CDATA[]]></Description>
+					  <PicUrl><![CDATA[http://www.guoyunstore.com/weixin/test/cao_xiuyixiu2/img/xiaotu.jpg]]></PicUrl>
+					  <Url><![CDATA[https://open.weixin.qq.com/connect/oauth2/authorize?appid=APPID&redirect_uri=http://www.guoyunstore.com/weixin/test/cao_xiuyixiu2/index.php&response_type=code&scope=snsapi_base&state=1#wechat_redirect]]></Url>
+					  </item>
+					  
+					  <FuncFlag>0</FuncFlag>
+					  </xml>";
+			$resultStr_event_mqj = sprintf($mqjTpl, $object->FromUserName, $object->ToUserName, time(), $content, $flag);
+	        return $resultStr_event_mqj;
+	    }
+	
+		*/
+		
+		/*  金粉测吧（已下线）
+		private function transmitevent_TEST($object, $contentStr, $flag = 0)
+	    {
+	         $TESTTpl = "<xml>
+						<ToUserName><![CDATA[%s]]></ToUserName>
+						<FromUserName><![CDATA[%s]]></FromUserName>
+						<CreateTime>%s</CreateTime>
+						<MsgType><![CDATA[news]]></MsgType>
+						<ArticleCount>4</ArticleCount>
+						<Articles>
+						<item>
+						<Title><![CDATA[金粉测吧]]></Title> 
+						<Description><![CDATA[]]></Description>
+						<PicUrl><![CDATA[http://www.guoyunstore.com/weixin/cb/images/cb_index.jpg]]></PicUrl>
+						<Url><![CDATA[]]></Url>
+						</item>
+						<item>
+						<Title><![CDATA[面膜达人闪亮登场]]></Title> 
+						<Description><![CDATA[1]]></Description>
+						<PicUrl><![CDATA[http://www.guoyunstore.com/weixin/cb/images/cb_3.jpg]]></PicUrl>
+						<Url><![CDATA[https://open.weixin.qq.com/connect/oauth2/authorize?appid=APPID&redirect_uri=http://www.guoyunstore.com/weixin/cb/index.php?type=mianmo&response_type=code&scope=snsapi_base&state=1#wechat_redirect]]></Url>
+						</item>
+						<item>
+						<Title><![CDATA[眼部肌肤测试]]></Title> 
+						<Description><![CDATA[1]]></Description>
+						<PicUrl><![CDATA[http://www.guoyunstore.com/weixin/cb/images/cb_1.jpg]]></PicUrl>
+						<Url><![CDATA[https://open.weixin.qq.com/connect/oauth2/authorize?appid=APPID&redirect_uri=http://www.guoyunstore.com/weixin/cb/index.php?type=yanbu&response_type=code&scope=snsapi_base&state=1#wechat_redirect]]></Url>
+						</item>
+						<item>
+						<Title><![CDATA[决定你幸福指数的测试]]></Title> 
+						<Description><![CDATA[1]]></Description>
+						<PicUrl><![CDATA[http://www.guoyunstore.com/weixin/cb/images/cb_2.jpg]]></PicUrl>
+						<Url><![CDATA[https://open.weixin.qq.com/connect/oauth2/authorize?appid=APPID&redirect_uri=http://www.guoyunstore.com/weixin/cb/index.php?type=xingfu&response_type=code&scope=snsapi_base&state=1#wechat_redirect]]></Url>
+						</item>
+						<FuncFlag>0</FuncFlag>
+						</xml>";
+			$resultStr_event_TEST = sprintf($TESTTpl, $object->FromUserName, $object->ToUserName, time(), $content, $flag);
+	        return $resultStr_event_TEST;
+	    }
+		*/
+		/*
+		private function transmitevent_TEST($object, $contentStr, $flag = 0)
+	    {
+	         $TESTTpl = "<xml>
+						<ToUserName><![CDATA[%s]]></ToUserName>
+						<FromUserName><![CDATA[%s]]></FromUserName>
+						<CreateTime>%s</CreateTime>
+						<MsgType><![CDATA[news]]></MsgType>
+						<ArticleCount>2</ArticleCount>
+						<Articles>
+						
+						
+						<item>
+						<Title><![CDATA[简单6步，教你查询产品专利]]></Title> 
+						<Description><![CDATA[1]]></Description>
+						<PicUrl><![CDATA[http://www.guoyunstore.com/weixin/WK/images/1/1.jpg]]></PicUrl>
+						<Url><![CDATA[https://open.weixin.qq.com/connect/oauth2/authorize?appid=APPID&redirect_uri=http://www.guoyunstore.com/weixin/WK/1.php?type=baoming&response_type=code&scope=snsapi_base&state=1#wechat_redirect]]></Url>
+						</item>
+						
+						
+						<item>
+						<Title><![CDATA[揭秘，与众不同防晒秘籍]]></Title> 
+						<Description><![CDATA[1]]></Description>
+						<PicUrl><![CDATA[http://www.guoyunstore.com/weixin/WK/images/2/1.jpg]]></PicUrl>
+						<Url><![CDATA[https://open.weixin.qq.com/connect/oauth2/authorize?appid=APPID&redirect_uri=http://www.guoyunstore.com/weixin/WK/2.php?type=baoming&response_type=code&scope=snsapi_base&state=1#wechat_redirect]]></Url>
+						</item>
+						
+						<FuncFlag>0</FuncFlag>
+						</xml>";
+			$resultStr_event_TEST = sprintf($TESTTpl, $object->FromUserName, $object->ToUserName, time(), $content, $flag);
+	        return $resultStr_event_TEST;
+	    }
+		*/
+		
+		private function transmitevent_DZP($object, $contentStr, $flag = 0)
+	    {
+	         $DZPTpl = "<xml>
+						<ToUserName><![CDATA[%s]]></ToUserName>
+						<FromUserName><![CDATA[%s]]></FromUserName>
+						<CreateTime>%s</CreateTime>
+						<MsgType><![CDATA[news]]></MsgType>
+						<ArticleCount>3</ArticleCount>
+						<Articles>
+						<item>
+						<Title><![CDATA[金粉转吧_点击进入抽奖]]></Title> 
+						<Description><![CDATA[]]></Description>
+						<PicUrl><![CDATA[http://www.guoyunstore.com/weixin_fwq/images/index_cj.jpg]]></PicUrl>
+						<Url><![CDATA[https://open.weixin.qq.com/connect/oauth2/authorize?appid=APPID&redirect_uri=http://www.guoyunstore.com/weixin/activity/fanpai/index.php&response_type=code&scope=snsapi_base&state=1#wechat_redirect]]></Url>
+						</item>
+						<item>
+						<Title><![CDATA[中奖名单]]></Title> 
+						<Description><![CDATA[1]]></Description>
+						<PicUrl><![CDATA[http://www.guoyunstore.com/weixin_fwq/images/cj_s1.jpg]]></PicUrl>
+						<Url><![CDATA[http://www.guoyunstore.com/weixin/DZP/list.php]]></Url>
+						</item>
+						<item>
+						<Title><![CDATA[产品中奖者资料提交入口]]></Title> 
+						<Description><![CDATA[1]]></Description>
+						<PicUrl><![CDATA[http://www.guoyunstore.com/weixin_fwq/images/cj_s2.jpg]]></PicUrl>
+						<Url><![CDATA[https://open.weixin.qq.com/connect/oauth2/authorize?appid=APPID&redirect_uri=http://www.guoyunstore.com/weixin/DZP/rukou.php&response_type=code&scope=snsapi_base&state=1#wechat_redirect]]></Url>
+						</item>
+						<FuncFlag>0</FuncFlag>
+						</xml>";
+			$resultStr_event_DZP = sprintf($DZPTpl, $object->FromUserName, $object->ToUserName, time(), $content, $flag);
+	        return $resultStr_event_DZP;
+	    }
+		
+		//http://www.guoyunstore.com/weixin/genus_day/ljshouye.php
+		//https://open.weixin.qq.com/connect/oauth2/authorize?appid=APPID&redirect_uri=http://www.guoyunstore.com/weixin/genus_day/genus_rukou.php&response_type=code&scope=snsapi_base&state=1#wechat_redirect
+		private function transmitevent_GENUS($object, $contentStr, $flag = 0)
+	    {
+	         $GENUSTpl = "<xml>
+						<ToUserName><![CDATA[%s]]></ToUserName>
+						<FromUserName><![CDATA[%s]]></FromUserName>
+						<CreateTime>%s</CreateTime>
+						<MsgType><![CDATA[news]]></MsgType>
+						<ArticleCount>4</ArticleCount>
+						<Articles>
+						<item>
+						<Title><![CDATA[金纳斯日_活动规则]]></Title> 
+						<Description><![CDATA[]]></Description>
+						<PicUrl><![CDATA[http://www.guoyunstore.com/weixin/genus_day/HDGZ.jpg]]></PicUrl>
+						<Url><![CDATA[https://open.weixin.qq.com/connect/oauth2/authorize?appid=APPID&redirect_uri=http://www.guoyunstore.com/weixin/genus_day/HDGZ.php&response_type=code&scope=snsapi_base&state=1#wechat_redirect]]></Url>
+						</item>
+						<item>
+						<Title><![CDATA[排行榜]]></Title> 
+						<Description><![CDATA[1]]></Description>
+						<PicUrl><![CDATA[http://www.guoyunstore.com/weixin/genus_day/genus_PHB.jpg]]></PicUrl>
+						<Url><![CDATA[https://open.weixin.qq.com/connect/oauth2/authorize?appid=APPID&redirect_uri=http://www.guoyunstore.com/weixin/genus_day/PHB.php&response_type=code&scope=snsapi_base&state=1#wechat_redirect]]></Url>
+						</item>
+						<item>
+						<Title><![CDATA[获奖者资料提交入口]]></Title> 
+						<Description><![CDATA[1]]></Description>
+						<PicUrl><![CDATA[http://www.guoyunstore.com/weixin/genus_day/genus_RK.jpg]]></PicUrl>
+						<Url><![CDATA[https://open.weixin.qq.com/connect/oauth2/authorize?appid=APPID&redirect_uri=http://www.guoyunstore.com/weixin/genus_day/genus_rukou.php&response_type=code&scope=snsapi_base&state=1#wechat_redirect]]></Url>
+						</item>
+						<item>
+						<Title><![CDATA[如何用自己手机扫描自己手机里的二维码]]></Title> 
+						<Description><![CDATA[1]]></Description>
+						<PicUrl><![CDATA[http://www.guoyunstore.com/weixin/genus_day/genus_erweima.jpg]]></PicUrl>
+						<Url><![CDATA[http://www.guoyunstore.com/weixin/genus_day/teach.html]]></Url>
+						</item>
+						<FuncFlag>0</FuncFlag>
+						</xml>";
+			$resultStr_event_GENUS = sprintf($GENUSTpl, $object->FromUserName, $object->ToUserName, time(), $content, $flag);
+	        return $resultStr_event_GENUS;
+	    }
+		
+		//首关提示
+		private function transmitevent_Subscribe($object, $contentStr, $flag = 0)
+	    {
+	         $GENUSTpl = "<xml>
+						<ToUserName><![CDATA[%s]]></ToUserName>
+						<FromUserName><![CDATA[%s]]></FromUserName>
+						<CreateTime>%s</CreateTime>
+						<MsgType><![CDATA[news]]></MsgType>
+						<ArticleCount>5</ArticleCount>
+						<Articles>
+						<item>
+						<Title><![CDATA[新品试用|礼物已经准备好，就等你点开啦！]]></Title> 
+						<Description><![CDATA[]]></Description>
+						<PicUrl><![CDATA[http://www.guoyunstore.com/weixin_fwq/img/top.jpg]]></PicUrl>
+						<Url><![CDATA[http://www.guoyunstore.com/weixin_fwq/img/ercode.png]]></Url>
+						</item>
+						<item>
+						<Title><![CDATA[护肤养生技巧戳这里]]></Title> 
+						<Description><![CDATA[1]]></Description>
+						<PicUrl><![CDATA[http://www.guoyunstore.com/weixin_fwq/img/1.jpg]]></PicUrl>
+						<Url><![CDATA[http://www.guoyunstore.com/weixin/JFMJ/rdyd_index_new.php]]></Url>
+						</item>
+						<item>
+						<Title><![CDATA[想获得金币请点击]]></Title> 
+						<Description><![CDATA[1]]></Description>
+						<PicUrl><![CDATA[http://www.guoyunstore.com/weixin_fwq/img/2.jpg]]></PicUrl>
+						<Url><![CDATA[https://open.weixin.qq.com/connect/oauth2/authorize?appid=APPID&redirect_uri=http://www.guoyunstore.com/weixin/duihuan/index1710.php&response_type=code&scope=snsapi_base&state=1#wechat_redirect]]></Url>
+						</item>
+						<item>
+						<Title><![CDATA[了解合伙人计划来这里]]></Title> 
+						<Description><![CDATA[1]]></Description>
+						<PicUrl><![CDATA[http://www.guoyunstore.com/weixin_fwq/img/3.jpg]]></PicUrl>
+						<Url><![CDATA[https://h5.youzan.com/v2/goods/2x5hdzdzm5ag8?reft=1527818418835&spm=f71479110]]></Url>
+						</item>
+						<item>
+						<Title><![CDATA[查看IPTV寡肽原液领奖订单]]></Title> 
+						<Description><![CDATA[1]]></Description>
+						<PicUrl><![CDATA[http://www.guoyunstore.com/weixin/test/tencent_promotion/img/xiaotu2.jpg]]></PicUrl>
+						<Url><![CDATA[http://www.guoyunstore.com/weixin/test/tencent_promotion/orderlist.php]]></Url>
+						</item>
+						<FuncFlag>0</FuncFlag>
+						</xml>";
+			$resultStr_event_GENUS = sprintf($GENUSTpl, $object->FromUserName, $object->ToUserName, time(), $content, $flag);
+	        return $resultStr_event_GENUS;
+	    }
+		
+		private function transmitevent_YD($object, $contentStr, $flag = 0)
+	    {
+	         $YDTpl = "<xml>
+						<ToUserName><![CDATA[%s]]></ToUserName>
+						<FromUserName><![CDATA[%s]]></FromUserName>
+						<CreateTime>%s</CreateTime>
+						<MsgType><![CDATA[news]]></MsgType>
+						<ArticleCount>3</ArticleCount>
+						<Articles>
+						<item>
+						<Title><![CDATA[调研问卷]]></Title> 
+						<Description><![CDATA[]]></Description>
+						<PicUrl><![CDATA[http://www.guoyunstore.com/weixin/yuandan/images/1.jpg]]></PicUrl>
+						<Url><![CDATA[https://open.weixin.qq.com/connect/oauth2/authorize?appid=APPID&redirect_uri=http://www.guoyunstore.com/weixin/yuandan/wenjuan.php&response_type=code&scope=snsapi_base&state=1#wechat_redirect]]></Url>
+						</item>
+						<item>
+						<Title><![CDATA[翻板抽奖]]></Title> 
+						<Description><![CDATA[1]]></Description>
+						<PicUrl><![CDATA[http://www.guoyunstore.com/weixin/yuandan/images/2.jpg]]></PicUrl>
+						<Url><![CDATA[https://open.weixin.qq.com/connect/oauth2/authorize?appid=APPID&redirect_uri=http://www.guoyunstore.com/weixin/yuandan/choujiang.php&response_type=code&scope=snsapi_base&state=1#wechat_redirect]]></Url>
+						</item>
+						<item>
+						<Title><![CDATA[面膜领取]]></Title> 
+						<Description><![CDATA[1]]></Description>
+						<PicUrl><![CDATA[http://www.guoyunstore.com/weixin/yuandan/images/3.jpg]]></PicUrl>
+						<Url><![CDATA[https://open.weixin.qq.com/connect/oauth2/authorize?appid=APPID&redirect_uri=http://www.guoyunstore.com/weixin/yuandan/lingqu.php&response_type=code&scope=snsapi_base&state=1#wechat_redirect]]></Url>
+						</item>
+						<FuncFlag>0</FuncFlag>
+						</xml>";
+			$resultStr_event_YD = sprintf($YDTpl, $object->FromUserName, $object->ToUserName, time(), $content, $flag);
+	        return $resultStr_event_YD;
+	    }
+		
+		private function transmitevent_location($object, $contentStr, $flag = 0,$name,$location,$telephone,$z)
+	    {	
+			$tupian = rand(5,9);
+	        $locationTpl = "<xml>
+							<ToUserName><![CDATA[%s]]></ToUserName>
+							<FromUserName><![CDATA[%s]]></FromUserName>
+							<CreateTime>%s</CreateTime>
+							<MsgType><![CDATA[news]]></MsgType>
+							<ArticleCount>2</ArticleCount>
+							<Articles>
+							<item>
+							<Title><![CDATA[最近店铺]]></Title> 
+							<Description><![CDATA[]]></Description>
+							<PicUrl><![CDATA[http://www.guoyunstore.com/weixin/images/JFYZ/$tupian.jpg]]></PicUrl>
+							<Url><![CDATA[]]></Url>
+							</item>
+							<item>
+							<Title><![CDATA[$name \n距离：$z 米 \n地址：$location \n电话：$telephone]]></Title>  
+							<Description><![CDATA[1]]></Description>
+							<PicUrl><![CDATA[]]></PicUrl>
+							<Url><![CDATA[]]></Url>
+							</item>
+							<FuncFlag>0</FuncFlag>
+							</xml>";
+			$resultStr_event_location = sprintf($locationTpl, $object->FromUserName, $object->ToUserName, time(), $content, $flag);
+	        return $resultStr_event_location;
+	    }
+			
+	    public function createMenu(){  
+	        $ACCESS_TOKEN = "lsL8Q-XoFNhOyHeUWxHrqt8nLju4aJxaSR37KOJedtHHGw96mpvZO1umWeaaS-tkQypp86aQKuoXeMrdy-HbTfPuMUcB2O23oy3nlSxtyMYiGSyIlFaJuhwdvFJv1NKAJCNbACAVOZ"; 
+	        $data = '{
+		    "button": [
+		        { 
+		            "name": "金纳斯", 
+		            "sub_button": [
+						{
+		                    "type": "view", 
+		                    "name": "金纳斯三大项目", 
+		                    "url": "http://www.guoyunstore.com/weixin/promotion/index.php"
+		                },
+						{
+		                    "type": "view", 
+		                    "name": "国家专利", 
+		                    "url": "http://genuschina.kuaizhan.com/93/90/p36754523718790"
+		                },
+		               
+		                {
+		                    "type": "view", 
+		                    "name": "产品系列", 
+		                    "url": "http://www.guoyunstore.com/weixin/product/index.php"
+		                },
+						{
+		                    "type": "view", 
+		                    "name": "公司官网", 
+		                    "url": "http://genuschina.kuaizhan.com"
+		               	},
+		                {
+		                    "type": "view", 
+		                    "name": "视频专区", 
+		                    "url": "http://www.guoyunstore.com/weixin/activity/genusvideo/index.php"
+		                }
+	 
+		            ]
+		        }, 
+		        {    
+					"type":"view",
+					"name":"金纳斯国韵商城",
+					"url":"https://j.youzan.com/l0Iv8Y"
+	            },
+		        {
+		            "name": "金会员", 
+		            "sub_button": [
+						{
+		                    "type": "view", 
+		                    "name": "寡肽原液免费送", 
+		                    "url": "https://open.weixin.qq.com/connect/oauth2/authorize?appid=APPID&redirect_uri=http://www.guoyunstore.com/weixin/activity/gt/index.php&response_type=code&scope=snsapi_base&state=1#wechat_redirect"
+		                }, 
+						{
+		                    "type": "view", 
+		                    "name": "Hot 金选", 
+		                    "url": "http://www.guoyunstore.com/weixin/JFMJ/rdyd_index_new.php"
+		                }, 
+						{
+		                    "type": "view", 
+		                    "name": "争分夺秒", 
+		                    "url": "http://www.guoyunstore.com/weixin/activity/click/zhuye.php"
+		                },
+						{
+		                    "type": "view", 
+		                    "name": "我要金币", 
+		                    "url": "https://open.weixin.qq.com/connect/oauth2/authorize?appid=APPID&redirect_uri=http://www.guoyunstore.com/weixin/duihuan/index1710.php&response_type=code&scope=snsapi_base&state=1&connect_redirect=1#wechat_redirect"
+		                }, 
+						{
+		                    "type": "view", 
+		                    "name": "我要参加", 
+		                    "url": "http://www.guoyunstore.com/weixin/activity/genushd/index.php"
+		                }
+		            ]
+		        }
+		    ]
+		}';
+	        $ch = curl_init();  
+	        curl_setopt($ch, CURLOPT_URL, "https://api.weixin.qq.com/cgi-bin/menu/create?access_token={$ACCESS_TOKEN}");  
+	        curl_setopt($ch, CURLOPT_CUSTOMREQUEST, "POST");  
+	        curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, FALSE);  
+	        curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, FALSE);  
+	        curl_setopt($ch, CURLOPT_USERAGENT, 'Mozilla/5.0 (compatible; MSIE 5.01; Windows NT 5.0)');  
+	        curl_setopt($ch, CURLOPT_FOLLOWLOCATION, 1);  
+	        curl_setopt($ch, CURLOPT_AUTOREFERER, 1);  
+	        curl_setopt($ch, CURLOPT_POSTFIELDS, $data);  
+	        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);  
+	        $tmpInfo = curl_exec($ch);  
+	        if (curl_errno($ch)) {  
+	            echo 'Errno'.curl_error($ch);  
+	        }  
+	        curl_close($ch);  
+	        var_dump($tmpInfo);
+	    }
+	}
+	 
+	function traceHttp()
+	{
+	    logger("\n\nREMOTE_ADDR:".$_SERVER["REMOTE_ADDR"].(strstr($_SERVER["REMOTE_ADDR"],'101.226')? " FROM WeiXin": "Unknown IP"));
+	    logger("QUERY_STRING:".$_SERVER["QUERY_STRING"]);
+	}
+	function logger($log_content)
+	{
+	    if(isset($_SERVER['HTTP_APPNAME'])){   //SAE
+	        sae_set_display_errors(false);
+	        sae_debug($log_content);
+	        sae_set_display_errors(true);
+	    }else{ //LOCAL
+	        $max_size = 500000;
+	        $log_filename = "log.xml";
+	        if(file_exists($log_filename) and (abs(filesize($log_filename)) > $max_size)){unlink($log_filename);}
+	        file_put_contents($log_filename, date('Y-m-d H:i:s').$log_content."\r\n", FILE_APPEND);
+	    }
+	}
+?>
+?>
+?>
+					  <item>
+					  <Title><![CDATA[680金币]]></Title> 
+					  <Description><![CDATA[1]]></Description>
+					  <PicUrl><![CDATA[http://www.guoyunstore.com/weixin_fwq/images/680_CSMM.jpg]]></PicUrl>
+					  <Url><![CDATA[https://open.weixin.qq.com/connect/oauth2/authorize?appid=APPID&redirect_uri=http://www.guoyunstore.com/weixin/BBDH/DHYM_680.php&response_type=code&scope=snsapi_base&state=1#wechat_redirect]]></Url>
+					  </item>
+												 <item>
+					  <Title><![CDATA[980金币]]></Title> 
+					  <Description><![CDATA[1]]></Description>
+					  <PicUrl><![CDATA[http://www.guoyunstore.com/weixin_fwq/images/PHS.jpg]]></PicUrl>
+					  <Url><![CDATA[https://open.weixin.qq.com/connect/oauth2/authorize?appid=APPID&redirect_uri=http://www.guoyunstore.com/weixin/BBDH/DHYM_980.php&response_type=code&scope=snsapi_base&state=1#wechat_redirect]]></Url>
+					  </item>
+					  
+					  <item>
+					  <Title><![CDATA[1380金币]]></Title> 
+					  <Description><![CDATA[1]]></Description>
+					  <PicUrl><![CDATA[http://www.guoyunstore.com/weixin_fwq/images/1380_HLXFT.jpg]]></PicUrl>
+					  <Url><![CDATA[https://open.weixin.qq.com/connect/oauth2/authorize?appid=APPID&redirect_uri=http://www.guoyunstore.com/weixin/BBDH/DHYM_1380.php&response_type=code&scope=snsapi_base&state=1#wechat_redirect]]></Url>
+					  </item>
+												 <item>
+					  <Title><![CDATA[1980金币]]></Title> 
+					  <Description><![CDATA[1]]></Description>
+					  <PicUrl><![CDATA[http://www.guoyunstore.com/weixin_fwq/images/MXS.jpg]]></PicUrl>
+					  <Url><![CDATA[https://open.weixin.qq.com/connect/oauth2/authorize?appid=APPID&redirect_uri=http://www.guoyunstore.com/weixin/BBDH/DHYM_1980.php&response_type=code&scope=snsapi_base&state=1#wechat_redirect]]></Url>
+					  </item>
+					  
+					  <item>
+					  <Title><![CDATA[3860金币]]></Title> 
+					  <Description><![CDATA[1]]></Description>
+					  <PicUrl><![CDATA[http://www.guoyunstore.com/weixin_fwq/images/3860_XLH.jpg]]></PicUrl>
+					  <Url><![CDATA[https://open.weixin.qq.com/connect/oauth2/authorize?appid=APPID&redirect_uri=http://www.guoyunstore.com/weixin/BBDH/DHYM_3860.php&response_type=code&scope=snsapi_base&state=1#wechat_redirect]]></Url>
+					  </item>
+					  
+					  <item>
+					  <Title><![CDATA[6800金币]]></Title> 
+					  <Description><![CDATA[1]]></Description>
+					  <PicUrl><![CDATA[http://www.guoyunstore.com/weixin_fwq/images/6800_LPT.jpg]]></PicUrl>
+					  <Url><![CDATA[https://open.weixin.qq.com/connect/oauth2/authorize?appid=APPID&redirect_uri=http://www.guoyunstore.com/weixin/BBDH/DHYM_6800.php&response_type=code&scope=snsapi_base&state=1#wechat_redirect]]></Url>
+					  </item>
+												 <item>
+					  <Title><![CDATA[9800金币]]></Title> 
+					  <Description><![CDATA[1]]></Description>
+					  <PicUrl><![CDATA[http://www.guoyunstore.com/weixin_fwq/images/BLD.jpg]]></PicUrl>
+					  <Url><![CDATA[https://open.weixin.qq.com/connect/oauth2/authorize?appid=APPID&redirect_uri=http://www.guoyunstore.com/weixin/BBDH/DHYM_9800.php&response_type=code&scope=snsapi_base&state=1#wechat_redirect]]></Url>
+					  </item>
+					  <item>
+					  <Title><![CDATA[点击此处查看您的历史兑换]]></Title> 
+					  <Description><![CDATA[1]]></Description>
+					  <PicUrl><![CDATA[]]></PicUrl>
+					  <Url><![CDATA[https://open.weixin.qq.com/connect/oauth2/authorize?appid=APPID&redirect_uri=http://www.guoyunstore.com/weixin/BBDH/chaxun.php&response_type=code&scope=snsapi_base&state=1#wechat_redirect]]></Url>
+					  </item>
+					  <FuncFlag>0</FuncFlag>
+					  </xml>";
+			$resultStr_event_DH = sprintf($DHTpl, $object->FromUserName, $object->ToUserName, time(), $content, $flag);
+	        return $resultStr_event_DH;
+	    }
+		
+		private function transmitevent_join($object, $contentStr,$flag = 0)
+	    {
+	         $joinTpl = "<xml>
+						  <ToUserName><![CDATA[%s]]></ToUserName>
+						  <FromUserName><![CDATA[%s]]></FromUserName>
+						  <CreateTime>%s</CreateTime>
+						  <MsgType><![CDATA[news]]></MsgType>
+						  <ArticleCount>2</ArticleCount>
+						  <Articles>
+						  
+						  <item>
+						  <Title><![CDATA[加盟方式400]]></Title> 
+						  <Description><![CDATA[1]]></Description>
+						  <PicUrl><![CDATA[http://www.guoyunstore.com/images/400.jpg]]></PicUrl>
+						  <Url><![CDATA[]]></Url>
+						  </item>
+						  <item>
+						  <Title><![CDATA[容大生物技术有限公司邀请您加盟\n详情咨询，请拨打\n全国服务热线：400-019-0918\n地址：广州市荔湾区芳村大道东200号48、49栋\n邮编：510370]]></Title> 
+						  <Description><![CDATA[1]]></Description>
+						  <PicUrl><![CDATA[]]></PicUrl>
+						  <Url><![CDATA[http://www.guoyunstore.com/weixin/JFYZ.html]]></Url>
+						  </item>
+						 
+						  <FuncFlag>0</FuncFlag>
+						  </xml>";
+			$resultStr_event_join = sprintf($joinTpl, $object->FromUserName, $object->ToUserName, time(), $content, $flag);
+	        return $resultStr_event_join;
+	    }
+		
+		//2017春节活动
+		private function transmitevent_chunjie($object, $contentStr,$flag = 0)
+	    {
+	         $chunjieTpl = "<xml>
+						  <ToUserName><![CDATA[%s]]></ToUserName>
+						  <FromUserName><![CDATA[%s]]></FromUserName>
+						  <CreateTime>%s</CreateTime>
+						  <MsgType><![CDATA[news]]></MsgType>
+						  <ArticleCount>3</ArticleCount>
+						  <Articles>
+						  
+						  <item>
+						  <Title><![CDATA[过年了，和家人一起“欢宵打蛋”吧！]]></Title> 
+						  <Description><![CDATA[1]]></Description>
+						  <PicUrl><![CDATA[http://www.guoyunstore.com/weixin/activity/DoubleDan/images/jp/1.jpg]]></PicUrl>
+						  <Url><![CDATA[https://open.weixin.qq.com/connect/oauth2/authorize?appid=APPID&redirect_uri=http://www.guoyunstore.com/weixin/activity/DoubleDan/shouye.php&response_type=code&scope=snsapi_base&state=1#wechat_redirect]]></Url>
+						  </item>
+						  
+						  <item>
+						  <Title><![CDATA[幸运获奖者名单]]></Title> 
+						  <Description><![CDATA[1]]></Description>
+						  <PicUrl><![CDATA[http://www.guoyunstore.com/weixin/activity/DoubleDan/images/y1.jpg]]></PicUrl>
+						  <Url><![CDATA[http://www.guoyunstore.com/weixin/activity/doubledan/luck_shouye.php]]></Url>
+						  </item>
+						  
+						  <item>
+						  <Title><![CDATA[明星产品试用名单]]></Title> 
+						  <Description><![CDATA[1]]></Description>
+						  <PicUrl><![CDATA[http://www.guoyunstore.com/weixin/activity/DoubleDan/images/y2.jpg]]></PicUrl>
+						  <Url><![CDATA[http://www.guoyunstore.com/weixin/activity/doubledan/shiyong_md.php]]></Url>
+						  </item>
+						 
+						  <FuncFlag>0</FuncFlag>
+						  </xml>";
+			$resultStr_event_chunjie = sprintf($chunjieTpl, $object->FromUserName, $object->ToUserName, time(), $content, $flag);
+	        return $resultStr_event_chunjie;
+	    }
+		
+		private function transmitevent_YZ($object, $contentStr, $flag = 0)
+	    {
+	         $YZTpl = "<xml>
+					  <ToUserName><![CDATA[%s]]></ToUserName>
+					  <FromUserName><![CDATA[%s]]></FromUserName>
+					  <CreateTime>%s</CreateTime>
+					  <MsgType><![CDATA[news]]></MsgType>
+					  <ArticleCount>2</ArticleCount>
+					  <Articles>
+					  <item>
+					  <Title><![CDATA[金粉驿站]]></Title> 
+					  <Description><![CDATA[1]]></Description>
+					  <PicUrl><![CDATA[http://www.guoyunstore.com/weixin_fwq/images/JFYZ.png]]></PicUrl>
+					  <Url><![CDATA[http://www.guoyunstore.com/weixin/JFYZ.html]]></Url>
+					  </item>
+					  <item>
+					  <Title><![CDATA[来金粉驿站，来最近的美容院享受金纳斯服务吧！]]></Title> 
+					  <Description><![CDATA[1]]></Description>
+					  <PicUrl><![CDATA[]]></PicUrl>
+					  <Url><![CDATA[http://www.guoyunstore.com/weixin/JFYZ.html]]></Url>
+					  </item>
+					  <FuncFlag>0</FuncFlag>
+					  </xml>";
+			$resultStr_event_YZ = sprintf($YZTpl, $object->FromUserName, $object->ToUserName, time(), $content, $flag);
+	        return $resultStr_event_YZ;
+	    }
+		
+		
+		private function transmitevent_queen($object, $contentStr, $flag = 0)
+	    {
+	         $queenTpl = "<xml>
+					  <ToUserName><![CDATA[%s]]></ToUserName>
+					  <FromUserName><![CDATA[%s]]></FromUserName>
+					  <CreateTime>%s</CreateTime>
+					  <MsgType><![CDATA[news]]></MsgType>
+					  <ArticleCount>5</ArticleCount>
+					  <Articles>
+					  <item>
+					  <Title><![CDATA[太阳女神争夺赛]]></Title>
+					  <Description><![CDATA[]]></Description>
+					  <PicUrl><![CDATA[http://www.guoyunstore.com/weixin/test/sungoddess_list/images/yemei.jpg]]></PicUrl>
+					  <Url><![CDATA[http://www.guoyunstore.com/weixin/test/sungoddess/gz.php]]></Url>
+					  </item>
+					  
+					  <item>
+					  <Title><![CDATA[领取代金券]]></Title>
+					  <Description><![CDATA[1]]></Description>
+					  <PicUrl><![CDATA[http://www.guoyunstore.com/weixin/test/jnsfs/images/xiaotu.jpg]]></PicUrl>
+					  <Url><![CDATA[https://open.weixin.qq.com/connect/oauth2/authorize?appid=APPID&redirect_uri=http://www.guoyunstore.com/weixin/test/jnsfs/kk.php&response_type=code&scope=snsapi_base&state=1#wechat_redirect]]></Url>
+					  </item>
+					  
+					  <item>
+					  <Title><![CDATA[我要参赛]]></Title>
+					  <Description><![CDATA[1]]></Description>
+					  <PicUrl><![CDATA[http://www.guoyunstore.com/weixin/test/sungoddess/images/xiaotu2.jpg]]></PicUrl>
+					  <Url><![CDATA[https://open.weixin.qq.com/connect/oauth2/authorize?appid=APPID&redirect_uri=http://www.guoyunstore.com/weixin/test/sungoddess_img/mt.php&response_type=code&scope=snsapi_base&state=1#wechat_redirect]]></Url>
+					  </item>
+					  
+					  <item>
+					  <Title><![CDATA[选手列表]]></Title>
+					  <Description><![CDATA[1]]></Description>
+					  <PicUrl><![CDATA[http://www.guoyunstore.com/weixin/test/sungoddess/images/xiaotu3.jpg]]></PicUrl>
+					  <Url><![CDATA[https://open.weixin.qq.com/connect/oauth2/authorize?appid=APPID&redirect_uri=http://www.guoyunstore.com/weixin/test/sungoddess_list/index.html&response_type=code&scope=snsapi_base&state=1#wechat_redirect]]></Url>
+					  </item>
+					  
+					  <item>
+					  <Title><![CDATA[获奖信息]]></Title>
+					  <Description><![CDATA[1]]></Description>
+					  <PicUrl><![CDATA[http://www.guoyunstore.com/weixin/test/sungoddess/images/xiaotu4.jpg]]></PicUrl>
+					  <Url><![CDATA[https://open.weixin.qq.com/connect/oauth2/authorize?appid=APPID&redirect_uri=http://www.guoyunstore.com/weixin/test/sungoddess/mc.php&response_type=code&scope=snsapi_base&state=STATE#wechat_redirect]]></Url>
+					  </item>
+				
+					  
+					  
+					  <FuncFlag>0</FuncFlag>
+					  </xml>";
+			$resultStr_event_queen = sprintf($queenTpl, $object->FromUserName, $object->ToUserName, time(), $content, $flag);
+	        return $resultStr_event_queen;
+	    }
+		
+					
+		/*金纳斯女王
+		private function transmitevent_queen($object, $contentStr, $flag = 0)
+	    {
+	         $queenTpl = "<xml>
+					  <ToUserName><![CDATA[%s]]></ToUserName>
+					  <FromUserName><![CDATA[%s]]></FromUserName>
+					  <CreateTime>%s</CreateTime>
+					  <MsgType><![CDATA[news]]></MsgType>
+					  <ArticleCount>2</ArticleCount>
+					  <Articles>
+					  <item>
+					  <Title><![CDATA[第一届金纳斯女王（2014.9~2014-11）]]></Title> 
+					  <Description><![CDATA[]]></Description>
+					  <PicUrl><![CDATA[http://www.guoyunstore.com/weixin/queen/images/queen_index.jpg]]></PicUrl>
+					  <Url><![CDATA[https://open.weixin.qq.com/connect/oauth2/authorize?appid=APPID&redirect_uri=http://www.guoyunstore.com/weixin/queen/index.php?type=baoming&response_type=code&scope=snsapi_base&state=1#wechat_redirect]]></Url>
+					  </item>
+					  <item>
+					  <Title><![CDATA[活动手册]]></Title> 
+					  <Description><![CDATA[1]]></Description>
+					  <PicUrl><![CDATA[http://www.guoyunstore.com/weixin/queen/images/queen_2.jpg]]></PicUrl>
+					  <Url><![CDATA[http://www.guoyunstore.com/weixin/queen/haibao.html]]></Url>
+					  </item>
+					  <FuncFlag>0</FuncFlag>
+					  </xml>";
+			$resultStr_event_queen = sprintf($queenTpl, $object->FromUserName, $object->ToUserName, time(), $content, $flag);
+	        return $resultStr_event_queen;
+	    }
+		*/
+		
+		
+		/*
+		
+		private function transmitevent_mqj($object, $contentStr, $flag = 0)
+	    {
+	         $mqjTpl = "<xml>
+					  <ToUserName><![CDATA[%s]]></ToUserName>
+					  <FromUserName><![CDATA[%s]]></FromUserName>
+					  <CreateTime>%s</CreateTime>
+					  <MsgType><![CDATA[news]]></MsgType>
+					  <ArticleCount>2</ArticleCount>
+					  <Articles>
+					  <item>
+					  <Title><![CDATA[脂肪修修秀]]></Title> 
+					  <Description><![CDATA[]]></Description>
+					  <PicUrl><![CDATA[http://www.guoyunstore.com/weixin/test/cao_xiuyixiu2/img/banner.jpg]]></PicUrl>
+					  <Url><![CDATA[https://open.weixin.qq.com/connect/oauth2/authorize?appid=APPID&redirect_uri=http://www.guoyunstore.com/weixin/JFMJ/JFMJ_20160602153751.php&response_type=code&scope=snsapi_base&state=1#wechat_redirect]]></Url>
+					  </item>
+					  <item>
+					  <Title><![CDATA[脂肪修修秀]]></Title>
+					  <Description><![CDATA[]]></Description>
+					  <PicUrl><![CDATA[http://www.guoyunstore.com/weixin/test/cao_xiuyixiu2/img/xiaotu.jpg]]></PicUrl>
+					  <Url><![CDATA[https://open.weixin.qq.com/connect/oauth2/authorize?appid=APPID&redirect_uri=http://www.guoyunstore.com/weixin/test/cao_xiuyixiu2/index.php&response_type=code&scope=snsapi_base&state=1#wechat_redirect]]></Url>
+					  </item>
+					  
+					  <FuncFlag>0</FuncFlag>
+					  </xml>";
+			$resultStr_event_mqj = sprintf($mqjTpl, $object->FromUserName, $object->ToUserName, time(), $content, $flag);
+	        return $resultStr_event_mqj;
+	    }
+	
+		*/
+		
+		/*  金粉测吧（已下线）
+		private function transmitevent_TEST($object, $contentStr, $flag = 0)
+	    {
+	         $TESTTpl = "<xml>
+						<ToUserName><![CDATA[%s]]></ToUserName>
+						<FromUserName><![CDATA[%s]]></FromUserName>
+						<CreateTime>%s</CreateTime>
+						<MsgType><![CDATA[news]]></MsgType>
+						<ArticleCount>4</ArticleCount>
+						<Articles>
+						<item>
+						<Title><![CDATA[金粉测吧]]></Title> 
+						<Description><![CDATA[]]></Description>
+						<PicUrl><![CDATA[http://www.guoyunstore.com/weixin/cb/images/cb_index.jpg]]></PicUrl>
+						<Url><![CDATA[]]></Url>
+						</item>
+						<item>
+						<Title><![CDATA[面膜达人闪亮登场]]></Title> 
+						<Description><![CDATA[1]]></Description>
+						<PicUrl><![CDATA[http://www.guoyunstore.com/weixin/cb/images/cb_3.jpg]]></PicUrl>
+						<Url><![CDATA[https://open.weixin.qq.com/connect/oauth2/authorize?appid=APPID&redirect_uri=http://www.guoyunstore.com/weixin/cb/index.php?type=mianmo&response_type=code&scope=snsapi_base&state=1#wechat_redirect]]></Url>
+						</item>
+						<item>
+						<Title><![CDATA[眼部肌肤测试]]></Title> 
+						<Description><![CDATA[1]]></Description>
+						<PicUrl><![CDATA[http://www.guoyunstore.com/weixin/cb/images/cb_1.jpg]]></PicUrl>
+						<Url><![CDATA[https://open.weixin.qq.com/connect/oauth2/authorize?appid=APPID&redirect_uri=http://www.guoyunstore.com/weixin/cb/index.php?type=yanbu&response_type=code&scope=snsapi_base&state=1#wechat_redirect]]></Url>
+						</item>
+						<item>
+						<Title><![CDATA[决定你幸福指数的测试]]></Title> 
+						<Description><![CDATA[1]]></Description>
+						<PicUrl><![CDATA[http://www.guoyunstore.com/weixin/cb/images/cb_2.jpg]]></PicUrl>
+						<Url><![CDATA[https://open.weixin.qq.com/connect/oauth2/authorize?appid=APPID&redirect_uri=http://www.guoyunstore.com/weixin/cb/index.php?type=xingfu&response_type=code&scope=snsapi_base&state=1#wechat_redirect]]></Url>
+						</item>
+						<FuncFlag>0</FuncFlag>
+						</xml>";
+			$resultStr_event_TEST = sprintf($TESTTpl, $object->FromUserName, $object->ToUserName, time(), $content, $flag);
+	        return $resultStr_event_TEST;
+	    }
+		*/
+		/*
+		private function transmitevent_TEST($object, $contentStr, $flag = 0)
+	    {
+	         $TESTTpl = "<xml>
+						<ToUserName><![CDATA[%s]]></ToUserName>
+						<FromUserName><![CDATA[%s]]></FromUserName>
+						<CreateTime>%s</CreateTime>
+						<MsgType><![CDATA[news]]></MsgType>
+						<ArticleCount>2</ArticleCount>
+						<Articles>
+						
+						
+						<item>
+						<Title><![CDATA[简单6步，教你查询产品专利]]></Title> 
+						<Description><![CDATA[1]]></Description>
+						<PicUrl><![CDATA[http://www.guoyunstore.com/weixin/WK/images/1/1.jpg]]></PicUrl>
+						<Url><![CDATA[https://open.weixin.qq.com/connect/oauth2/authorize?appid=APPID&redirect_uri=http://www.guoyunstore.com/weixin/WK/1.php?type=baoming&response_type=code&scope=snsapi_base&state=1#wechat_redirect]]></Url>
+						</item>
+						
+						
+						<item>
+						<Title><![CDATA[揭秘，与众不同防晒秘籍]]></Title> 
+						<Description><![CDATA[1]]></Description>
+						<PicUrl><![CDATA[http://www.guoyunstore.com/weixin/WK/images/2/1.jpg]]></PicUrl>
+						<Url><![CDATA[https://open.weixin.qq.com/connect/oauth2/authorize?appid=APPID&redirect_uri=http://www.guoyunstore.com/weixin/WK/2.php?type=baoming&response_type=code&scope=snsapi_base&state=1#wechat_redirect]]></Url>
+						</item>
+						
+						<FuncFlag>0</FuncFlag>
+						</xml>";
+			$resultStr_event_TEST = sprintf($TESTTpl, $object->FromUserName, $object->ToUserName, time(), $content, $flag);
+	        return $resultStr_event_TEST;
+	    }
+		*/
+		
+		private function transmitevent_DZP($object, $contentStr, $flag = 0)
+	    {
+	         $DZPTpl = "<xml>
+						<ToUserName><![CDATA[%s]]></ToUserName>
+						<FromUserName><![CDATA[%s]]></FromUserName>
+						<CreateTime>%s</CreateTime>
+						<MsgType><![CDATA[news]]></MsgType>
+						<ArticleCount>3</ArticleCount>
+						<Articles>
+						<item>
+						<Title><![CDATA[金粉转吧_点击进入抽奖]]></Title> 
+						<Description><![CDATA[]]></Description>
+						<PicUrl><![CDATA[http://www.guoyunstore.com/weixin_fwq/images/index_cj.jpg]]></PicUrl>
+						<Url><![CDATA[https://open.weixin.qq.com/connect/oauth2/authorize?appid=APPID&redirect_uri=http://www.guoyunstore.com/weixin/activity/fanpai/index.php&response_type=code&scope=snsapi_base&state=1#wechat_redirect]]></Url>
+						</item>
+						<item>
+						<Title><![CDATA[中奖名单]]></Title> 
+						<Description><![CDATA[1]]></Description>
+						<PicUrl><![CDATA[http://www.guoyunstore.com/weixin_fwq/images/cj_s1.jpg]]></PicUrl>
+						<Url><![CDATA[http://www.guoyunstore.com/weixin/DZP/list.php]]></Url>
+						</item>
+						<item>
+						<Title><![CDATA[产品中奖者资料提交入口]]></Title> 
+						<Description><![CDATA[1]]></Description>
+						<PicUrl><![CDATA[http://www.guoyunstore.com/weixin_fwq/images/cj_s2.jpg]]></PicUrl>
+						<Url><![CDATA[https://open.weixin.qq.com/connect/oauth2/authorize?appid=APPID&redirect_uri=http://www.guoyunstore.com/weixin/DZP/rukou.php&response_type=code&scope=snsapi_base&state=1#wechat_redirect]]></Url>
+						</item>
+						<FuncFlag>0</FuncFlag>
+						</xml>";
+			$resultStr_event_DZP = sprintf($DZPTpl, $object->FromUserName, $object->ToUserName, time(), $content, $flag);
+	        return $resultStr_event_DZP;
+	    }
+		
+		//http://www.guoyunstore.com/weixin/genus_day/ljshouye.php
+		//https://open.weixin.qq.com/connect/oauth2/authorize?appid=APPID&redirect_uri=http://www.guoyunstore.com/weixin/genus_day/genus_rukou.php&response_type=code&scope=snsapi_base&state=1#wechat_redirect
+		private function transmitevent_GENUS($object, $contentStr, $flag = 0)
+	    {
+	         $GENUSTpl = "<xml>
+						<ToUserName><![CDATA[%s]]></ToUserName>
+						<FromUserName><![CDATA[%s]]></FromUserName>
+						<CreateTime>%s</CreateTime>
+						<MsgType><![CDATA[news]]></MsgType>
+						<ArticleCount>4</ArticleCount>
+						<Articles>
+						<item>
+						<Title><![CDATA[金纳斯日_活动规则]]></Title> 
+						<Description><![CDATA[]]></Description>
+						<PicUrl><![CDATA[http://www.guoyunstore.com/weixin/genus_day/HDGZ.jpg]]></PicUrl>
+						<Url><![CDATA[https://open.weixin.qq.com/connect/oauth2/authorize?appid=APPID&redirect_uri=http://www.guoyunstore.com/weixin/genus_day/HDGZ.php&response_type=code&scope=snsapi_base&state=1#wechat_redirect]]></Url>
+						</item>
+						<item>
+						<Title><![CDATA[排行榜]]></Title> 
+						<Description><![CDATA[1]]></Description>
+						<PicUrl><![CDATA[http://www.guoyunstore.com/weixin/genus_day/genus_PHB.jpg]]></PicUrl>
+						<Url><![CDATA[https://open.weixin.qq.com/connect/oauth2/authorize?appid=APPID&redirect_uri=http://www.guoyunstore.com/weixin/genus_day/PHB.php&response_type=code&scope=snsapi_base&state=1#wechat_redirect]]></Url>
+						</item>
+						<item>
+						<Title><![CDATA[获奖者资料提交入口]]></Title> 
+						<Description><![CDATA[1]]></Description>
+						<PicUrl><![CDATA[http://www.guoyunstore.com/weixin/genus_day/genus_RK.jpg]]></PicUrl>
+						<Url><![CDATA[https://open.weixin.qq.com/connect/oauth2/authorize?appid=APPID&redirect_uri=http://www.guoyunstore.com/weixin/genus_day/genus_rukou.php&response_type=code&scope=snsapi_base&state=1#wechat_redirect]]></Url>
+						</item>
+						<item>
+						<Title><![CDATA[如何用自己手机扫描自己手机里的二维码]]></Title> 
+						<Description><![CDATA[1]]></Description>
+						<PicUrl><![CDATA[http://www.guoyunstore.com/weixin/genus_day/genus_erweima.jpg]]></PicUrl>
+						<Url><![CDATA[http://www.guoyunstore.com/weixin/genus_day/teach.html]]></Url>
+						</item>
+						<FuncFlag>0</FuncFlag>
+						</xml>";
+			$resultStr_event_GENUS = sprintf($GENUSTpl, $object->FromUserName, $object->ToUserName, time(), $content, $flag);
+	        return $resultStr_event_GENUS;
+	    }
+		
+		//首关提示
+		private function transmitevent_Subscribe($object, $contentStr, $flag = 0)
+	    {
+	         $GENUSTpl = "<xml>
+						<ToUserName><![CDATA[%s]]></ToUserName>
+						<FromUserName><![CDATA[%s]]></FromUserName>
+						<CreateTime>%s</CreateTime>
+						<MsgType><![CDATA[news]]></MsgType>
+						<ArticleCount>5</ArticleCount>
+						<Articles>
+						<item>
+						<Title><![CDATA[新品试用|礼物已经准备好，就等你点开啦！]]></Title> 
+						<Description><![CDATA[]]></Description>
+						<PicUrl><![CDATA[http://www.guoyunstore.com/weixin_fwq/img/top.jpg]]></PicUrl>
+						<Url><![CDATA[http://www.guoyunstore.com/weixin_fwq/img/ercode.png]]></Url>
+						</item>
+						<item>
+						<Title><![CDATA[护肤养生技巧戳这里]]></Title> 
+						<Description><![CDATA[1]]></Description>
+						<PicUrl><![CDATA[http://www.guoyunstore.com/weixin_fwq/img/1.jpg]]></PicUrl>
+						<Url><![CDATA[http://www.guoyunstore.com/weixin/JFMJ/rdyd_index_new.php]]></Url>
+						</item>
+						<item>
+						<Title><![CDATA[想获得金币请点击]]></Title> 
+						<Description><![CDATA[1]]></Description>
+						<PicUrl><![CDATA[http://www.guoyunstore.com/weixin_fwq/img/2.jpg]]></PicUrl>
+						<Url><![CDATA[https://open.weixin.qq.com/connect/oauth2/authorize?appid=APPID&redirect_uri=http://www.guoyunstore.com/weixin/duihuan/index1710.php&response_type=code&scope=snsapi_base&state=1#wechat_redirect]]></Url>
+						</item>
+						<item>
+						<Title><![CDATA[了解合伙人计划来这里]]></Title> 
+						<Description><![CDATA[1]]></Description>
+						<PicUrl><![CDATA[http://www.guoyunstore.com/weixin_fwq/img/3.jpg]]></PicUrl>
+						<Url><![CDATA[https://h5.youzan.com/v2/goods/2x5hdzdzm5ag8?reft=1527818418835&spm=f71479110]]></Url>
+						</item>
+						<item>
+						<Title><![CDATA[查看IPTV寡肽原液领奖订单]]></Title> 
+						<Description><![CDATA[1]]></Description>
+						<PicUrl><![CDATA[http://www.guoyunstore.com/weixin/test/tencent_promotion/img/xiaotu2.jpg]]></PicUrl>
+						<Url><![CDATA[http://www.guoyunstore.com/weixin/test/tencent_promotion/orderlist.php]]></Url>
+						</item>
+						<FuncFlag>0</FuncFlag>
+						</xml>";
+			$resultStr_event_GENUS = sprintf($GENUSTpl, $object->FromUserName, $object->ToUserName, time(), $content, $flag);
+	        return $resultStr_event_GENUS;
+	    }
+		
+		private function transmitevent_YD($object, $contentStr, $flag = 0)
+	    {
+	         $YDTpl = "<xml>
+						<ToUserName><![CDATA[%s]]></ToUserName>
+						<FromUserName><![CDATA[%s]]></FromUserName>
+						<CreateTime>%s</CreateTime>
+						<MsgType><![CDATA[news]]></MsgType>
+						<ArticleCount>3</ArticleCount>
+						<Articles>
+						<item>
+						<Title><![CDATA[调研问卷]]></Title> 
+						<Description><![CDATA[]]></Description>
+						<PicUrl><![CDATA[http://www.guoyunstore.com/weixin/yuandan/images/1.jpg]]></PicUrl>
+						<Url><![CDATA[https://open.weixin.qq.com/connect/oauth2/authorize?appid=APPID&redirect_uri=http://www.guoyunstore.com/weixin/yuandan/wenjuan.php&response_type=code&scope=snsapi_base&state=1#wechat_redirect]]></Url>
+						</item>
+						<item>
+						<Title><![CDATA[翻板抽奖]]></Title> 
+						<Description><![CDATA[1]]></Description>
+						<PicUrl><![CDATA[http://www.guoyunstore.com/weixin/yuandan/images/2.jpg]]></PicUrl>
+						<Url><![CDATA[https://open.weixin.qq.com/connect/oauth2/authorize?appid=APPID&redirect_uri=http://www.guoyunstore.com/weixin/yuandan/choujiang.php&response_type=code&scope=snsapi_base&state=1#wechat_redirect]]></Url>
+						</item>
+						<item>
+						<Title><![CDATA[面膜领取]]></Title> 
+						<Description><![CDATA[1]]></Description>
+						<PicUrl><![CDATA[http://www.guoyunstore.com/weixin/yuandan/images/3.jpg]]></PicUrl>
+						<Url><![CDATA[https://open.weixin.qq.com/connect/oauth2/authorize?appid=APPID&redirect_uri=http://www.guoyunstore.com/weixin/yuandan/lingqu.php&response_type=code&scope=snsapi_base&state=1#wechat_redirect]]></Url>
+						</item>
+						<FuncFlag>0</FuncFlag>
+						</xml>";
+			$resultStr_event_YD = sprintf($YDTpl, $object->FromUserName, $object->ToUserName, time(), $content, $flag);
+	        return $resultStr_event_YD;
+	    }
+		
+		private function transmitevent_location($object, $contentStr, $flag = 0,$name,$location,$telephone,$z)
+	    {	
+			$tupian = rand(5,9);
+	        $locationTpl = "<xml>
+							<ToUserName><![CDATA[%s]]></ToUserName>
+							<FromUserName><![CDATA[%s]]></FromUserName>
+							<CreateTime>%s</CreateTime>
+							<MsgType><![CDATA[news]]></MsgType>
+							<ArticleCount>2</ArticleCount>
+							<Articles>
+							<item>
+							<Title><![CDATA[最近店铺]]></Title> 
+							<Description><![CDATA[]]></Description>
+							<PicUrl><![CDATA[http://www.guoyunstore.com/weixin/images/JFYZ/$tupian.jpg]]></PicUrl>
+							<Url><![CDATA[]]></Url>
+							</item>
+							<item>
+							<Title><![CDATA[$name \n距离：$z 米 \n地址：$location \n电话：$telephone]]></Title>  
+							<Description><![CDATA[1]]></Description>
+							<PicUrl><![CDATA[]]></PicUrl>
+							<Url><![CDATA[]]></Url>
+							</item>
+							<FuncFlag>0</FuncFlag>
+							</xml>";
+			$resultStr_event_location = sprintf($locationTpl, $object->FromUserName, $object->ToUserName, time(), $content, $flag);
+	        return $resultStr_event_location;
+	    }
+			
+	    public function createMenu(){
+          //access token should not be hardcore
+	        $ACCESS_TOKEN = "lsL8Q-XoFNhOyHeUWxHrqt8nLju4aJxaSR37KOJedtHHGw96mpvZO1umWeaaS-tkQypp86aQKuoXeMrdy-HbTfPuMUcB2O23oy3nlSxtyMYiGSyIlFaJuhwdvFJv1NKAJCNbACAVOZ"; 
+	        $data = '{
+		    "button": [
+		        { 
+		            "name": "金纳斯", 
+		            "sub_button": [
+						{
+		                    "type": "view", 
+		                    "name": "金纳斯三大项目", 
+		                    "url": "http://www.guoyunstore.com/weixin/promotion/index.php"
+		                },
+						{
+		                    "type": "view", 
+		                    "name": "国家专利", 
+		                    "url": "http://genuschina.kuaizhan.com/93/90/p36754523718790"
+		                },
+		               
+		                {
+		                    "type": "view", 
+		                    "name": "产品系列", 
+		                    "url": "http://www.guoyunstore.com/weixin/product/index.php"
+		                },
+						{
+		                    "type": "view", 
+		                    "name": "公司官网", 
+		                    "url": "http://genuschina.kuaizhan.com"
+		               	},
+		                {
+		                    "type": "view", 
+		                    "name": "视频专区", 
+		                    "url": "http://www.guoyunstore.com/weixin/activity/genusvideo/index.php"
+		                }
+	 
+		            ]
+		        }, 
+		        {    
+					"type":"view",
+					"name":"金纳斯国韵商城",
+					"url":"https://j.youzan.com/l0Iv8Y"
+	            },
+		        {
+		            "name": "金会员", 
+		            "sub_button": [
+						{
+		                    "type": "view", 
+		                    "name": "寡肽原液免费送", 
+		                    "url": "https://open.weixin.qq.com/connect/oauth2/authorize?appid=APPID&redirect_uri=http://www.guoyunstore.com/weixin/activity/gt/index.php&response_type=code&scope=snsapi_base&state=1#wechat_redirect"
+		                }, 
+						{
+		                    "type": "view", 
+		                    "name": "Hot 金选", 
+		                    "url": "http://www.guoyunstore.com/weixin/JFMJ/rdyd_index_new.php"
+		                }, 
+						{
+		                    "type": "view", 
+		                    "name": "争分夺秒", 
+		                    "url": "http://www.guoyunstore.com/weixin/activity/click/zhuye.php"
+		                },
+						{
+		                    "type": "view", 
+		                    "name": "我要金币", 
+		                    "url": "https://open.weixin.qq.com/connect/oauth2/authorize?appid=APPID&redirect_uri=http://www.guoyunstore.com/weixin/duihuan/index1710.php&response_type=code&scope=snsapi_base&state=1&connect_redirect=1#wechat_redirect"
+		                }, 
+						{
+		                    "type": "view", 
+		                    "name": "我要参加", 
+		                    "url": "http://www.guoyunstore.com/weixin/activity/genushd/index.php"
+		                }
+		            ]
+		        }
+		    ]
+		}';
+	        $ch = curl_init();  
+	        curl_setopt($ch, CURLOPT_URL, "https://api.weixin.qq.com/cgi-bin/menu/create?access_token={$ACCESS_TOKEN}");  
+	        curl_setopt($ch, CURLOPT_CUSTOMREQUEST, "POST");  
+	        curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, FALSE);  
+	        curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, FALSE);  
+	        curl_setopt($ch, CURLOPT_USERAGENT, 'Mozilla/5.0 (compatible; MSIE 5.01; Windows NT 5.0)');  
+	        curl_setopt($ch, CURLOPT_FOLLOWLOCATION, 1);  
+	        curl_setopt($ch, CURLOPT_AUTOREFERER, 1);  
+	        curl_setopt($ch, CURLOPT_POSTFIELDS, $data);  
+	        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);  
+	        $tmpInfo = curl_exec($ch);  
+	        if (curl_errno($ch)) {  
+	            echo 'Errno'.curl_error($ch);  
+	        }  
+	        curl_close($ch);  
+	        var_dump($tmpInfo);
+	    }
+	}
+	 
+	function traceHttp()
+	{
+	    logger("\n\nREMOTE_ADDR:".$_SERVER["REMOTE_ADDR"].(strstr($_SERVER["REMOTE_ADDR"],'101.226')? " FROM WeiXin": "Unknown IP"));
+	    logger("QUERY_STRING:".$_SERVER["QUERY_STRING"]);
+	}
+	function logger($log_content)
+	{
+	    if(isset($_SERVER['HTTP_APPNAME'])){   //SAE
+	        sae_set_display_errors(false);
+	        sae_debug($log_content);
+	        sae_set_display_errors(true);
+	    }else{ //LOCAL
+	        $max_size = 500000;
+	        $log_filename = "log.xml";
+	        if(file_exists($log_filename) and (abs(filesize($log_filename)) > $max_size)){unlink($log_filename);}
+	        file_put_contents($log_filename, date('Y-m-d H:i:s').$log_content."\r\n", FILE_APPEND);
+	    }
+	}
+?>
